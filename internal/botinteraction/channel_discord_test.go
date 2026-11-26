@@ -419,3 +419,41 @@ func TestDiscordConnectInteractionFlow(t *testing.T) {
 		t.Fatal("sink timeout")
 	}
 }
+
+func TestStartDiscordTaskThread(t *testing.T) {
+	var mu sync.Mutex
+	var posts []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		posts = append(posts, r.Method+" "+r.URL.Path)
+		mu.Unlock()
+		auth := r.Header.Get("Authorization")
+		if !strings.HasPrefix(auth, "Bot ") {
+			t.Errorf("bad auth header shape: %q", auth)
+		}
+		if strings.Contains(string(mustRead(r)), "SECRETTOKEN") {
+			t.Fatal("token leaked into body")
+		}
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/channels/ch-1/messages":
+			io.WriteString(w, `{"id":"msg-1"}`)
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/threads"):
+			io.WriteString(w, `{"id":"thread-9"}`)
+		default:
+			w.WriteHeader(404)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	ch := newDiscordChannel()
+	ch.api = srv.URL
+	c := &discordConn{channel: ch, token: "SECRETTOKEN", ctx: context.Background(), bot: domain.NotificationBot{BotID: "app"}}
+	id, err := c.startTaskThread(DiscordInteraction{ID: "ix-long-id-12345", ChannelID: "ch-1"})
+	if err != nil || id != "thread-9" {
+		t.Fatalf("id=%q err=%v posts=%v", id, err, posts)
+	}
+}
+
+func mustRead(r *http.Request) []byte {
+	b, _ := io.ReadAll(r.Body)
+	return b
+}

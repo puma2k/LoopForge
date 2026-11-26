@@ -478,6 +478,14 @@ func (c *discordConn) handleInteraction(raw []byte) {
 		log.Printf("discord interaction ack failed")
 		return
 	}
+	// /task: open a public thread under the deferred reply so SOP progress
+	// can be pushed into that thread (ChatOrigin.ChatID = thread id).
+	if name == "task" {
+		if threadID, err := c.startTaskThread(ix); err == nil && threadID != "" {
+			ev.ChatID = threadID
+			ev.ChatType = "group"
+		}
+	}
 	ackCtx, cancel := context.WithTimeout(c.ctx, c.channel.ackTimeout)
 	defer cancel()
 	done := make(chan struct{})
@@ -492,6 +500,56 @@ func (c *discordConn) handleInteraction(raw []byte) {
 	case <-ackCtx.Done():
 		// Deferred already: storage may still finish; duplicates de-dupe by message id.
 	}
+}
+
+// startTaskThread posts a starter message in the command channel and opens a
+// public thread from it. Failures are non-fatal: /task still runs in-channel.
+func (c *discordConn) startTaskThread(ix DiscordInteraction) (string, error) {
+	channelID := strings.TrimSpace(ix.ChannelID)
+	if channelID == "" || c.token == "" {
+		return "", errors.New("missing channel")
+	}
+	ctx, cancel := context.WithTimeout(c.ctx, sendTimeout)
+	defer cancel()
+	msgURL := c.channel.apiBase() + "/channels/" + url.PathEscape(channelID) + "/messages"
+	status, data, err := c.channel.doJSON(ctx, http.MethodPost, msgURL, c.token, map[string]any{
+		"content": "LoopForge `/task`：进度会更新到本线程。",
+	})
+	if err != nil {
+		return "", err
+	}
+	if status >= 300 {
+		return "", fmt.Errorf("discord create message http %d", status)
+	}
+	var created struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(data, &created); err != nil || created.ID == "" {
+		return "", errors.New("discord create message missing id")
+	}
+	threadURL := c.channel.apiBase() + "/channels/" + url.PathEscape(channelID) + "/messages/" + url.PathEscape(created.ID) + "/threads"
+	name := "task-" + truncate(ix.ID, 20)
+	if name == "task-" {
+		name = "loopforge-task"
+	}
+	st, body, err := c.channel.doJSON(ctx, http.MethodPost, threadURL, c.token, map[string]any{
+		"name":                    truncate(name, 100),
+		"auto_archive_duration":   1440,
+		"type":                    11, // GUILD_PUBLIC_THREAD
+	})
+	if err != nil {
+		return "", err
+	}
+	if st >= 300 {
+		return "", fmt.Errorf("discord create thread http %d", st)
+	}
+	var thread struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(body, &thread); err != nil || thread.ID == "" {
+		return "", errors.New("discord create thread missing id")
+	}
+	return thread.ID, nil
 }
 
 func (c *discordConn) interactionCallback(ix DiscordInteraction, body any) error {

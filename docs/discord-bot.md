@@ -40,7 +40,7 @@ Luồng bước: ① Điền credentials → ② Xác nhận server (auto-lock k
 | --- | --- |
 | `/link` hoặc `/bind` | Xin liên kết tài khoản nền tảng |
 | `/link CODE` / `/bind CODE` | Xác nhận mã trên trang bind |
-| `/task mô tả` | Tạo requirement local, gán user đã bind, dispatch SOP (channel map → default SOP → SOP dự án) |
+| `/task mô tả` | Tạo requirement local, gán user đã bind, dispatch SOP (channel map → default SOP → SOP dự án); mở **thread** công khai gắn tin nhắn lệnh để đăng tiến độ / link lần chạy / lỗi |
 | `/ask` / tin nhắn thường | Hội thoại qua model (cần đã bind) |
 | `/unbind` | Gỡ liên kết |
 
