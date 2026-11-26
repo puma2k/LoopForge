@@ -67,6 +67,40 @@ describe("i18n-vi-check must-fail cases (review findings)", () => {
       );
     }
   });
+
+  it("catches mustache name rewrite {{thượng nguồn}} vs {{upstream}}", () => {
+    const key = "## 上游节点输出\n\n{{upstream}}";
+    const v = "## Đầu ra bước thượng nguồn\n\n{{thượng nguồn}}";
+    const issues = checkValue(key, v);
+    assert.ok(
+      hasType(issues, "placeholder"),
+      `expected placeholder for mustache name mismatch: ${JSON.stringify(issues)}`,
+    );
+  });
+
+  it("catches hiện tại … prefix calque", () => {
+    const issues = checkValue("当前版本", "hiện tại phiên bản");
+    assert.ok(hasType(issues, "calque"), `expected calque: ${JSON.stringify(issues)}`);
+  });
+
+  it("catches Này … / có không khả dụng calque", () => {
+    const issues = checkValue(
+      "这个项目还没有可用的 SOP",
+      "Này dự án có không khả dụng SOPs",
+    );
+    assert.ok(hasType(issues, "calque"), `expected calque: ${JSON.stringify(issues)}`);
+  });
+
+  it("catches letter glued to curly quotes", () => {
+    const issues = checkValue(
+      "需求「{{issue.title}}」已完成",
+      "yêu cầu“{{issue.title}}”đã hoàn tất",
+    );
+    assert.ok(
+      hasType(issues, "quote"),
+      `expected quote glue: ${JSON.stringify(issues)}`,
+    );
+  });
 });
 
 describe("i18n-vi-check must-pass cases", () => {
@@ -101,5 +135,31 @@ describe("i18n-vi-check must-pass cases", () => {
       "%s đã hoàn tất tác vụ: %s",
     );
     assert.deepEqual(types(issues), []);
+  });
+
+  it("passes exact mustache {{upstream}}", () => {
+    const issues = checkValue(
+      "## 上游节点输出\n\n{{upstream}}",
+      "## Đầu ra bước thượng nguồn\n\n{{upstream}}",
+    );
+    assert.deepEqual(issues, [], `unexpected: ${JSON.stringify(issues)}`);
+  });
+
+  it("passes Phiên bản hiện tại (not hiện tại prefix)", () => {
+    const issues = checkValue("当前版本", "Phiên bản hiện tại");
+    assert.deepEqual(issues, [], `unexpected: ${JSON.stringify(issues)}`);
+  });
+
+  it("passes Hiện không có yêu cầu đang chạy", () => {
+    const issues = checkValue("当前没有进行中的需求", "Hiện không có yêu cầu đang chạy");
+    assert.deepEqual(issues, [], `unexpected: ${JSON.stringify(issues)}`);
+  });
+
+  it("passes spaced curly quotes around mustache", () => {
+    const issues = checkValue(
+      "需求「{{issue.title}}」已完成",
+      "Yêu cầu “{{issue.title}}” đã hoàn tất",
+    );
+    assert.deepEqual(issues, [], `unexpected: ${JSON.stringify(issues)}`);
   });
 });

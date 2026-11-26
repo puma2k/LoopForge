@@ -64,6 +64,8 @@ const CALQUES = [
   "tại đã chọn",
   "là đang chờ",
   "và làm không",
+  "có không khả dụng",
+  "và khác nâng cao",
 ];
 
 /** Calques matched with a trailing boundary so "không thể làm" is not hit. */
@@ -71,6 +73,14 @@ const CALQUE_RES = [
   {
     re: /không thể là(?=$|\s|[.,;:!?…])/g,
     detail: "không thể là",
+  },
+  {
+    re: /Này .+ có không/g,
+    detail: "Này … có không",
+  },
+  {
+    re: /là trong$/g,
+    detail: "là trong$",
   },
 ];
 
@@ -1544,9 +1554,14 @@ function checkPlaceholders(value) {
   return issues;
 }
 
+/**
+ * Multiset signature for placeholder parity.
+ * Mustache `{{name}}` keeps the exact name (do not collapse to `{{}}`).
+ * Other forms keep kind multisets: `%s`/`%d`/`%v`/`%w`, `{x}` → `{}`, `${x}` → `${}`.
+ */
 function placeholderSignature(text) {
   return extractPlaceholders(text).map((p) => {
-    if (p.raw.startsWith("{{")) return "{{}}";
+    if (p.raw.startsWith("{{")) return p.raw; // exact {{name}}
     if (p.raw.startsWith("${")) return "${}";
     if (p.raw.startsWith("{")) return "{}";
     return p.raw.replace(/[0-9]+/, ""); // %s / %d / %v / %w
@@ -1559,12 +1574,38 @@ function checkPlaceholderParity(key, value) {
   if (k.length !== v.length) {
     return [{ type: "placeholder", detail: `count key=${k.length} value=${v.length}` }];
   }
-  // Compare multiset of kinds
+  // Compare multiset of kinds / exact mustache names
   const sortJoin = (arr) => [...arr].sort().join(",");
   if (sortJoin(k) !== sortJoin(v)) {
     return [{ type: "placeholder", detail: `mismatch key=[${k}] value=[${v}]` }];
   }
   return [];
+}
+
+/** Letter glued to curly / CJK quotes: yêu cầu“ / ”đã / 「…」. */
+function checkQuoteGlue(value) {
+  const issues = [];
+  const pairs = [
+    ["\u201c", "\u201d"], // “ ”
+    ["\u300c", "\u300d"], // 「 」
+  ];
+  for (const [open, close] of pairs) {
+    for (let i = 0; i < value.length; i++) {
+      const ch = value[i];
+      if (ch === open) {
+        const before = i === 0 ? null : value[i - 1];
+        if (isLetterChar(before)) {
+          issues.push({ type: "quote", detail: `${before}${open}` });
+        }
+      } else if (ch === close) {
+        const after = i + 1 >= value.length ? null : value[i + 1];
+        if (isLetterChar(after)) {
+          issues.push({ type: "quote", detail: `${close}${after}` });
+        }
+      }
+    }
+  }
+  return issues;
 }
 
 function maskIgnored(value) {
@@ -1642,6 +1683,14 @@ function checkGlued(value) {
 
 function checkCalques(value) {
   const issues = [];
+  // Calque 当前X → "hiện tại …" at start (lowercase hiện)
+  if (/^hiện tại /.test(value)) {
+    issues.push({ type: "calque", detail: "hiện tại …" });
+  }
+  // Calque 这/该/本 → "Này …" at start
+  if (/^Này /.test(value)) {
+    issues.push({ type: "calque", detail: "Này …" });
+  }
   for (const calque of CALQUES) {
     if (value.includes(calque)) {
       issues.push({ type: "calque", detail: calque });
@@ -1687,6 +1736,7 @@ export function checkValue(key, value) {
   issues.push(...checkCalques(value));
   issues.push(...checkGlued(value));
   issues.push(...checkPlaceholders(value));
+  issues.push(...checkQuoteGlue(value));
   if (typeof key === "string") {
     issues.push(...checkPlaceholderParity(key, value));
   }
