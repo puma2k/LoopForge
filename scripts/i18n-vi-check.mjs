@@ -1624,7 +1624,12 @@ function maskIgnored(value) {
   s = s.replace(/\b[a-z]+(?:[A-Z][a-z0-9]*)+\b/g, " ");
   s = s.replace(/\b[A-Z][a-z]+(?:[A-Z][a-z0-9]*)+\b/g, " ");
   s = s.replace(
-    /\b(?:rel|src|href|target|class|style|type|name|id|role|aria-[a-z-]+)\s*=\s*(?:"[^"]*"|'[^']*'|"|"|'|')/gi,
+    /\b(?:rel|src|href|target|class|style|type|name|id|role|title|aria-[a-z-]+)\s*=\s*(?:"[^"]*"|'[^']*'|"|"|'|')/gi,
+    " ",
+  );
+  // Unclosed HTML attribute fragments used as dict keys (e.g. `title="返回`).
+  s = s.replace(
+    /\b(?:rel|src|href|target|class|style|type|name|id|role|title|aria-[a-z-]+)\s*=\s*"[^"]*$/gi,
     " ",
   );
   s = s.replace(/\bsh\s+-c\s+'[^']*'/g, " ");
@@ -1720,10 +1725,58 @@ function checkTerminology(value) {
     issues.push({ type: "term", detail: "Không gian làm việc" });
   }
   const masked = maskIgnored(value);
-  const wsRe = /(?<![\w./$`])\b[Ww]orkspaces?\b(?![\w./])/g;
+  // Allow trailing punctuation (e.g. "workspace.") but not path segments.
+  const wsRe = /(?<![\w./$`])\b[Ww]orkspaces?\b(?![\w/])/g;
   let m;
   while ((m = wsRe.exec(masked)) !== null) {
     issues.push({ type: "term", detail: m[0] });
+  }
+  return issues;
+}
+
+/** Broken EN→VI contractions / word-salad, e.g. "Có thể't xóa". */
+const BROKEN_CONTRACTION_RE = /Có thể['’]t\b/g;
+
+/** Translated HTML attribute name that breaks markup. */
+const BAD_HTML_ATTR_RE = /tiêu đề\s*=/g;
+
+/** Repeated "bản bản" from over-literal preview/build calques. */
+const BAN_BAN_RE = /bản\s+bản\b/giu;
+
+/** docs/*.md paths that must stay byte-identical when present in the key. */
+const DOCS_MD_RE = /docs\/[a-z0-9._/-]+\.md/gi;
+
+/** Fixed machine IDs that must not be translated when present in the key. */
+const MACHINE_IDS = ["af-preview-build", "af-preview-builder"];
+
+/**
+ * Structural / fidelity checks that need the source key.
+ */
+function checkKeyValueFidelity(key, value) {
+  const issues = [];
+  BROKEN_CONTRACTION_RE.lastIndex = 0;
+  if (BROKEN_CONTRACTION_RE.test(value)) {
+    issues.push({ type: "broken", detail: "Có thể't" });
+  }
+  BAD_HTML_ATTR_RE.lastIndex = 0;
+  if (BAD_HTML_ATTR_RE.test(value)) {
+    issues.push({ type: "html-attr", detail: "tiêu đề=" });
+  }
+  BAN_BAN_RE.lastIndex = 0;
+  if (BAN_BAN_RE.test(value)) {
+    issues.push({ type: "calque", detail: "bản bản" });
+  }
+  for (const id of MACHINE_IDS) {
+    if (key.includes(id) && !value.includes(id)) {
+      issues.push({ type: "machine-id", detail: id });
+    }
+  }
+  DOCS_MD_RE.lastIndex = 0;
+  const docsInKey = key.match(DOCS_MD_RE) || [];
+  for (const path of docsInKey) {
+    if (!value.includes(path)) {
+      issues.push({ type: "docs-path", detail: path });
+    }
   }
   return issues;
 }
@@ -1798,6 +1851,10 @@ export function checkValue(key, value) {
   issues.push(...checkQuoteGlue(value));
   if (typeof key === "string") {
     issues.push(...checkPlaceholderParity(key, value));
+    issues.push(...checkKeyValueFidelity(key, value));
+  } else {
+    // Value-only calls still catch broken contractions / bad HTML attrs / bản bản.
+    issues.push(...checkKeyValueFidelity("", value));
   }
 
   for (const { word } of extractAsciiWords(value)) {

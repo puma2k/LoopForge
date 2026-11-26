@@ -141,6 +141,66 @@ describe("i18n-vi-check must-fail cases (review findings)", () => {
       `expected term: ${JSON.stringify(issues)}`,
     );
   });
+
+  it("catches broken Có thể't contraction", () => {
+    for (const v of ["Có thể't xóa", "Có thể't xem trước: thiếu đường dẫn tệp"]) {
+      const issues = checkValue("无法删除", v);
+      assert.ok(
+        hasType(issues, "broken"),
+        `expected broken in ${JSON.stringify(v)}: ${JSON.stringify(issues)}`,
+      );
+    }
+  });
+
+  it("catches translated af-preview machine IDs", () => {
+    const key =
+      "平台节点「构建静态站点」不在角色列表里：id 固定为 af-preview-build，agentId 为 af-preview-builder。";
+    const v =
+      "ID cố định là af-xem trước-bản dựng và agentId là af-xem trước-builder.";
+    const issues = checkValue(key, v);
+    assert.ok(
+      hasType(issues, "machine-id"),
+      `expected machine-id: ${JSON.stringify(issues)}`,
+    );
+  });
+
+  it("catches translated docs/*.md path", () => {
+    const key =
+      "协议及脚本见仓库 docs/external-workflow-usage.md。";
+    const v = "Xem docs/external-quy trình-usage.md cho giao thức.";
+    const issues = checkValue(key, v);
+    assert.ok(
+      hasType(issues, "docs-path"),
+      `expected docs-path: ${JSON.stringify(issues)}`,
+    );
+  });
+
+  it("catches tiêu đề= HTML attribute translation", () => {
+    const issues = checkValue(
+      '" title="前端预览" src="',
+      '" tiêu đề="Xem trước giao diện" src="',
+    );
+    assert.ok(
+      hasType(issues, "html-attr"),
+      `expected html-attr: ${JSON.stringify(issues)}`,
+    );
+  });
+
+  it("catches bản bản repetition", () => {
+    const issues = checkValue("预览构建", "Xem trước bản bản dựng");
+    assert.ok(
+      hasType(issues, "calque"),
+      `expected calque bản bản: ${JSON.stringify(issues)}`,
+    );
+  });
+
+  it("catches standalone workspace terminology with trailing punct", () => {
+    const issues = checkValue("这个会话还没有工作区。", "Phiên này chưa có workspace.");
+    assert.ok(
+      hasType(issues, "term"),
+      `expected term workspace: ${JSON.stringify(issues)}`,
+    );
+  });
 });
 
 describe("i18n-vi-check must-pass cases", () => {
@@ -220,6 +280,35 @@ describe("i18n-vi-check must-pass cases", () => {
       let k = key;
       if (value === "Tiếp tục nhánh đã có %s") k = "%s";
       const issues = checkValue(k, value);
+      assert.deepEqual(
+        issues,
+        [],
+        `unexpected issues for ${value}: ${JSON.stringify(issues)}`,
+      );
+    }
+  });
+
+  it("passes fixed Can't / af-preview / docs / title= / bản strings", () => {
+    const good = [
+      ["无法删除", "Không thể xóa"],
+      ["无法预览：缺少文件路径", "Không thể xem trước: thiếu đường dẫn tệp"],
+      ["无法预览：未选中技能", "Không thể xem trước: chưa chọn Skill"],
+      [
+        "平台节点「构建静态站点」不在角色列表里：id 固定为 af-preview-build，agentId 为 af-preview-builder。",
+        "ID cố định là af-preview-build và agentId là af-preview-builder.",
+      ],
+      [
+        "协议及脚本见仓库 docs/external-workflow-usage.md。",
+        "Xem docs/external-workflow-usage.md cho giao thức và tập lệnh.",
+      ],
+      ['" title="前端预览" src="', '" title="Xem trước giao diện" src="'],
+      ['" title="删除">', '" title="Xóa">'],
+      ['" title="打开运行', '" title="Mở lần chạy'],
+      ["预览构建", "Xem trước bản dựng"],
+      ["这个会话还没有工作区。", "Phiên này chưa có bàn làm việc."],
+    ];
+    for (const [key, value] of good) {
+      const issues = checkValue(key, value);
       assert.deepEqual(
         issues,
         [],
