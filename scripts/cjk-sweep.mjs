@@ -15,9 +15,13 @@ try {
 
 const OUT_DIR = process.env.LF_OUT_DIR || path.join(REPO, ".tmp/loopforge-vi-sweep");
 const REPORT = path.join(OUT_DIR, "sweep-report.json");
+const LOG_FILE = process.env.LF_LOG_FILE || path.join(OUT_DIR, "cjk-sweep.log");
 const BASE = process.env.LF_BASE_URL || "http://127.0.0.1:8090";
 const PROJECT = process.env.LF_PROJECT || "welcome";
-const cookieFile = process.env.LF_COOKIE_FILE || "/tmp/lf-agentflow-user.cookie";
+if (!process.env.LF_COOKIE_FILE) {
+  throw new Error("LF_COOKIE_FILE is required (path to session cookie file); no /tmp fallback");
+}
+const cookieFile = process.env.LF_COOKIE_FILE;
 const cookie = fs.readFileSync(cookieFile, "utf8").trim();
 const passName = process.argv[2] || "sweep";
 
@@ -232,7 +236,8 @@ async function scanPage(page, opts = {}) {
 
 function log(msg) {
   const line = new Date().toISOString() + " " + msg;
-  fs.appendFileSync("/tmp/cjk-sweep.log", line + "\n");
+  fs.mkdirSync(path.dirname(LOG_FILE), { recursive: true });
+  fs.appendFileSync(LOG_FILE, line + "\n");
 }
 
 async function settle(page, ms = 400) {

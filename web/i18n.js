@@ -88,6 +88,10 @@
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', startLangMotion, { once: true });
   else startLangMotion();
 
+  // HAN detects source text that still needs translation (Han + CJK punctuation).
+  // HAN_CHARS filters dictionary values: only reject entries that still contain real Han,
+  // so Vietnamese/English values that keep a CJK period/quote are still usable.
+  const HAN_CHARS = /[\u3400-\u9fff]/;
   const HAN = /[\u3400-\u9fff\u300c\u300d\uff0c\u3002\uff1a\uff08\uff09\u3001\uff1b\uff01\uff1f]/;
   const SKIP = new Set(['SCRIPT', 'STYLE', 'TEXTAREA', 'CODE', 'PRE', 'NOSCRIPT']);
   const SKIP_SEL = '[data-i18n-skip],.monaco-editor,.xterm,.log-line,.run-log,.markdown-body,[contenteditable="true"]';
@@ -101,7 +105,7 @@
   const fragments = Object.keys(dict).filter(k => {
     if (((k.match(/[\u3400-\u9fff]/g) || []).length < 3)) return false;
     const val = dict[k];
-    return typeof val === 'string' && val.length && !HAN.test(val);
+    return typeof val === 'string' && val.length && !HAN_CHARS.test(val);
   }).sort((a, b) => b.length - a.length);
   const fragmentREs = [];
   const CHUNK = 200;
@@ -175,7 +179,7 @@
 
   function translateExact(text) {
     const trimmed = text && text.trim();
-    return trimmed && Object.prototype.hasOwnProperty.call(dict, trimmed) && dict[trimmed] && !HAN.test(dict[trimmed])
+    return trimmed && Object.prototype.hasOwnProperty.call(dict, trimmed) && dict[trimmed] && !HAN_CHARS.test(dict[trimmed])
       ? text.replace(trimmed, dict[trimmed]) : text;
   }
 
@@ -185,7 +189,7 @@
     if (hit !== undefined) return hit;
     const trimmed = text.trim();
     let out;
-    if (Object.prototype.hasOwnProperty.call(dict, trimmed) && dict[trimmed] && !HAN.test(dict[trimmed])) {
+    if (Object.prototype.hasOwnProperty.call(dict, trimmed) && dict[trimmed] && !HAN_CHARS.test(dict[trimmed])) {
       out = text.replace(trimmed, dict[trimmed]);
     } else {
       out = text;
