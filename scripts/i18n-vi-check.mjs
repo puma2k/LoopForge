@@ -1,9 +1,11 @@
 #!/usr/bin/env node
 /**
  * Check web/i18n-vi.js for leftover CJK, empty values, English/Vietnamese
- * word-salad, and known calque patterns. Exit non-zero when issues remain.
+ * word-salad, glued syllables, bad placeholders, and known calques.
+ * Exit non-zero when issues remain.
  *
  * Usage: node scripts/i18n-vi-check.mjs
+ * Test helpers: import { checkValue } from "./i18n-vi-check.mjs"
  */
 import { readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
@@ -18,314 +20,1584 @@ const CJK_PUNCT = /[\u3000-\u303f\uff01-\uff60]/;
 const ASCII_WORD = /\b[A-Za-z][A-Za-z'’\-]*\b/g;
 const VI_LETTER =
   /[ÀÁẢÃẠĂẰẮẲẴẶÂẦẤẨẪẬÈÉẺẼẸÊỀẾỂỄỆÌÍỈĨỊÒÓỎÕỌÔỒỐỔỖỘƠỜỚỞỠỢÙÚỦŨỤƯỪỨỬỮỰỲÝỶỸỴĐàáảãạăằắẳẵặâầấẩẫậèéẻẽẹêềếểễệìíỉĩịòóỏõọôồốổỗộơờớởỡợùúủũụưừứửữựỳýỷỹỵđ]/;
+const TONE_MARKED =
+  /[àáảãạằắẳẵặầấẩẫậèéẻẽẹềếểễệìíỉĩịòóỏõọồốổỗộờớởỡợùúủũụừứửữựỳýỷỹỵÀÁẢÃẠẰẮẲẴẶẦẤẨẪẬÈÉẺẼẸỀẾỂỄỆÌÍỈĨỊÒÓỎÕỌỒỐỔỖỘỜỚỞỠỢÙÚỦŨỤỪỨỬỮỰỲÝỶỸỴ]/;
 const UNICODE_LETTER = /\p{L}/u;
+const LETTER_RUN = /\p{L}+/gu;
+
+/** Must appear exactly in this casing. Lowercase / mixed → acronym-case. */
+const ACRONYMS = new Set([
+  "REST",
+  "API",
+  "SSH",
+  "MCP",
+  "SOP",
+  "PR",
+  "MR",
+  "CLI",
+  "URL",
+  "JSON",
+  "YAML",
+  "HTTP",
+  "HTTPS",
+  "ID",
+  "AI",
+  "LLM",
+  "UTC",
+  "CPU",
+  "GPU",
+  "RAM",
+]);
 
 const CALQUES = [
-  "đến này",
-  "trong này dự án",
-  "trên này",
+  "đầu tiên dòng",
+  "đầu tiên bước",
+  "đầu tiên tài khoản",
+  "rest là",
+  "là trống",
   "Này là",
+  "đến này",
+  "trong này",
+  "trên này",
   "quay lại đến",
   "Mới mật khẩu",
-  "đầu tiên bước",
   "tại đã chọn",
   "là đang chờ",
   "và làm không",
-  "đến tại",
-  "tại nhiều nhất",
-  "tại thời gian",
-  "Thêm đến ",
-  "Avg ",
-  "avg ",
-  "e.g.",
-  "backfill",
-  "bởi avg",
+];
+
+/** Calques matched with a trailing boundary so "không thể làm" is not hit. */
+const CALQUE_RES = [
+  {
+    re: /không thể là(?=$|\s|[.,;:!?…])/g,
+    detail: "không thể là",
+  },
 ];
 
 /** Always report — even if mistakenly added to the allowlist. */
 const BLACKLIST = [
-  "Asking", "Writing", "returned", "destructive", "Don't", "ended", "now",
-  "your", "the", "to", "of", "this", "that", "please", "create", "account",
-  "request", "understanding", "prefer", "fall", "roll", "back", "currently",
-  "regenerate", "repeatedly", "interval", "placeable", "answers", "questions",
-  "block", "start", "at", "in", "on", "is", "are", "and", "or", "with", "for",
-  "from", "by", "not", "no", "yes", "new", "old", "first", "last", "next",
-  "failed", "success", "loading", "saving", "retry", "cancel", "delete",
-  "edit", "save", "open", "close", "run", "runs", "running", "step", "steps",
-  "node", "nodes", "result", "results", "error", "errors", "user", "users",
-  "project", "projects", "settings",
+  "Asking",
+  "Writing",
+  "returned",
+  "destructive",
+  "Don't",
+  "ended",
+  "now",
+  "your",
+  "the",
+  "to",
+  "of",
+  "this",
+  "that",
+  "please",
+  "create",
+  "account",
+  "request",
+  "understanding",
+  "prefer",
+  "fall",
+  "roll",
+  "back",
+  "currently",
+  "regenerate",
+  "repeatedly",
+  "interval",
+  "placeable",
+  "answers",
+  "questions",
+  "block",
+  "start",
+  "at",
+  "in",
+  "on",
+  "is",
+  "are",
+  "and",
+  "or",
+  "with",
+  "for",
+  "from",
+  "by",
+  "not",
+  "no",
+  "yes",
+  "new",
+  "old",
+  "first",
+  "last",
+  "next",
+  "failed",
+  "success",
+  "loading",
+  "saving",
+  "retry",
+  "cancel",
+  "delete",
+  "edit",
+  "save",
+  "open",
+  "close",
+  "run",
+  "runs",
+  "running",
+  "step",
+  "steps",
+  "node",
+  "nodes",
+  "result",
+  "results",
+  "error",
+  "errors",
+  "user",
+  "users",
+  "project",
+  "projects",
+  "settings",
+  // Round-4 additions
+  "rest",
+  "Avg",
+  "title",
+  "description",
+  "done",
+  "object",
+  "Contents",
 ].map((w) => w.toLowerCase());
 const BLACKLIST_SET = new Set(BLACKLIST);
 
 /**
- * Proper nouns / product terms that may stay in English.
- * Extend only for genuine terms — never ordinary English filler.
+ * Small allowlist: real product / technical terms only.
+ * Ordinary English filler must NOT appear here.
  */
-const ALLOWLIST = [
-  // Required by task
-  "LoopForge", "API", "Key", "Keys", "MCP", "Git", "GitHub", "GitLab", "SSH",
-  "HTTPS", "HTTP", "token", "tokens", "Token", "model", "models", "Agent",
-  "Agents", "SOP", "SOPs", "Docker", "Dockerfile", "PR", "PRs", "MR", "MRs",
-  "CodeBuddy", "Cursor", "Codex", "Claude", "Code", "OpenCode", "Kimi", "Pi",
-  "DeepSeek", "Gemini", "Antigravity", "ZCode", "Harness", "CLI", "Bot",
-  "Bots", "Webhook", "WeCom", "TAPD", "Skill", "Skills", "Rule", "Rules",
-  "Playwright", "Chromium", "Markdown", "JSON", "YAML", "URL", "ID", "IDE",
-  "VS", "OAuth", "LLM", "AI", "Prompt", "prompt", "sandbox", "Sandbox",
-  "workspace", "Workspace", "branch", "commit", "push", "merge", "pull",
-  "fetch", "diff", "patch", "repo", "Pipeline", "pipeline", "runner", "Runner",
-  "Studio", "Loop", "Prometheus", "Grafana", "OpenTelemetry", "OTLP", "MySQL",
-  "Postgres", "Redis", "MinIO", "S3", "Linux", "macOS", "Windows", "Mac",
-  "Node", "Python", "Go", "Shell", "Bash", "npm", "Vite", "React",
-  "Kubernetes", "k8s", "cron", "Cron", "UTC", "OK", "VI", "EN", "Tencent",
-  "Gongfeng", "CNB", "Feishu", "Slack", "Discord", "Telegram", "Email",
-  "email", "Chrome", "Firefox", "Safari", "Monaco", "xterm", "iframe",
-  "emoji", "tab", "Tab", "Enter", "Esc", "Ctrl", "Cmd", "Shift", "Alt",
-  "P50", "P90", "P95", "P99", "QPS", "RPS", "KB", "MB", "GB", "ms", "CPU",
-  "GPU", "RAM", "v",
-  // Extra genuine product / protocol / UI nouns used as labels
-  "Main", "Trace", "Traces", "Canvas", "OpenAI", "iOA", "Owner", "Cloud",
-  "KPI", "PDF", "CSV", "SQL", "HTML", "CSS", "JS", "TS", "SDK", "JWT", "SSL",
-  "TLS", "PEM", "OpenSSH", "Bug", "Issue", "Issues", "CDN", "DNS", "IP", "UI",
-  "UX", "QA", "CI", "CD", "SHA", "HMAC", "TB", "TODO", "GPT", "ECharts", "XML",
-  "SVG", "PNG", "JPEG", "JPG", "GIF", "WebSocket", "SSE", "REST", "RPC", "gRPC",
-  "Nginx", "Apache", "Ubuntu", "Debian", "Alpine", "PHP", "Java", "Kotlin",
-  "Swift", "Ruby", "Rust", "TypeScript", "JavaScript", "Kafka", "MongoDB",
-  "Elasticsearch", "AWS", "GCP", "Azure", "Webhooks", "Compose", "Podman",
-  "Helm", "Terraform", "Ansible", "Jenkins", "Jira", "Notion", "Figma",
-  "Sentry", "Datadog", "Jaeger", "Zipkin", "Loki", "Tempo", "PostgreSQL",
-  "MariaDB", "SQLite", "Anthropic", "Ollama", "Copilot", "ChatGPT", "SSO",
-  "OIDC", "LDAP", "RBAC", "TTL", "UUID", "UTF", "ASCII", "Unicode", "Regex",
-  "regex", "Schema", "schema", "DOM", "PWA", "SPA", "VPN", "SMTP", "SFTP",
-  "SSD", "HDD", "NVMe", "USB", "KVM", "QEMU", "VMware", "Pulumi", "Django",
-  "Flask", "FastAPI", "axios", "wget", "curl", "jq", "sed", "awk", "grep",
-  "ssh", "scp", "rsync", "tmux", "vim", "nvim", "sudo", "kubectl", "pip",
-  "cargo", "gcc", "make", "cmake", "yarn", "pnpm", "bun", "deno", "conda",
-  "poetry", "nvm", "maven", "gradle", "eslint", "prettier", "jest", "vitest",
-  "cypress", "puppeteer", "README", "LICENSE", "CHANGELOG", "AGENTS",
-  "CONTRIBUTING", "SECURITY", "FAQ", "WIP", "RFC", "ADR", "MVP", "POC", "PoC",
-  "LTS", "GA", "RC", "alpha", "beta", "stable", "latest", "main", "master",
-  "develop", "hotfix", "release", "tag", "tags", "fork", "upstream", "origin",
-  "remote", "clone", "stash", "rebase", "blame", "log", "status", "checkout",
-  "reset", "revert", "squash", "HEAD", "base64", "gzip", "tar", "toml", "ini",
-  "env", "yml", "webp", "ico", "woff", "mp4", "webm", "WebRTC", "WebGL",
-  "CAPTCHA", "CSRF", "XSS", "SSRF", "RCE", "DoS", "DDoS", "WAF", "CVE",
-  "OWASP", "GDPR", "i18n", "l10n", "a11y", "RTL", "LTR", "DHCP", "NTP",
-  "BusyBox", "musl", "glibc", "clang", "apk", "deb", "rpm", "msi", "exe",
-  "dmg", "snap", "flatpak", "venv", "webpack", "rollup", "babel", "swc",
-  "prisma", "drizzle", "mongoose", "ioredis", "bullmq", "RabbitMQ", "NATS",
-  "Homebrew", "apt", "yum", "brew", "zsh", "fish", "powershell", "systemd",
-  "journalctl", "htop", "SELinux", "AppArmor", "eBPF", "BPF", "Hy", "CNY",
-  "USD", "Prompts", "Artifact", "Artifacts", "Playbook", "Playbooks",
-  "Workbench", "Dashboard", "Dashboards", "Board", "Templates", "Designer",
-  "Metrics", "Usage", "Reports", "Domains", "Connect", "Runners",
-  "Environments", "Sandboxes", "Capabilities", "Roles", "Flows", "Delivery",
-  "Insights", "Build", "Work", "Platform", "Personal", "Extensions",
-  "Knowledge", "Assets", "Access", "Management", "Overview", "Profile",
-  "Accounts", "Guide", "Docs", "Help", "About", "Feedback", "Support",
-  "Health", "Ready", "Live", "Dark", "Light", "Theme", "Locale", "Timezone",
-  "Language", "Avg", "Max", "Min", "Sum", "Count", "Marketplace", "Backlog",
-  "Workflow", "Workflows", "Timeout", "Product", "Hook", "Hooks", "Executor",
-  "Secret", "Secrets", "Logs", "Worker", "Workers", "Domain", "Ticket",
-  "Tickets", "metadata", "daemon", "heartbeat", "proxy", "clipboard", "alias",
-  "Baseline", "baseline", "Rework", "rework", "Trend", "Role", "Brief", "Plan",
-  "Coding", "GLM", "EPP", "Palworld", "MCPs", "agentflow", "stdout", "stderr",
-  "stdin", "localhost", "hostname", "payload", "header", "headers", "cookie",
-  "cookies", "session", "Bearer", "Basic", "scope", "scopes", "repository",
-  "repositories", "subdir", "monorepo", "workdir", "cache", "Cache",
-  "frontend", "backend", "DevOps", "SRE", "SLA", "SLO", "latency",
-  "throughput", "Throughput", "bandwidth", "script", "scripts", "Script",
-  "Scripts", "preview", "Preview", "demo", "Demo", "mock", "snapshot",
-  "coverage", "Coverage", "lint", "review", "Review", "approvals", "Approvals",
-  "comment", "Comments", "thread", "Thread", "Threads", "host", "Host",
-  "Hosts", "image", "Image", "Images", "container", "Container", "Containers",
-  "volume", "Volume", "network", "Network", "ingress", "Ingress", "service",
-  "Service", "Services", "endpoint", "Endpoint", "Endpoints", "route", "Route",
-  "Routes", "router", "Router", "middleware", "Middleware", "handler",
-  "Handler", "plugin", "Plugin", "Plugins", "extension", "Extension",
-  "module", "Module", "Modules", "package", "Package", "Packages", "library",
-  "Library", "framework", "Framework", "runtime", "Runtime", "toolchain",
-  "sdk", "GUI", "TUI", "site", "Site", "Sites", "portal", "Portal", "console",
-  "Console", "terminal", "Terminal", "pty", "PTY", "tty", "TTY", "stdio",
-  "test", "tests", "Test", "Tests", "e2e", "E2E", "unit", "Unit",
-  "integration", "Integration", "smoke", "Smoke", "regression", "Regression",
-  "canary", "Canary", "deploy", "Deploy", "deployment", "Deployment",
-  "Release", "Releases", "Hotfix", "Patch", "Patches", "Changelog", "ok",
-  "vs", "etc", "eg", "vd", "avg", "max", "min", "sum", "id", "idx", "uuid",
-  "guid", "url", "uri", "urn", "http", "https", "ws", "wss", "tcp", "udp",
-  "quic", "grpc", "json", "yaml", "yml", "toml", "xml", "html", "css", "scss",
-  "sql", "nosql", "NoSQL", "graphql", "GraphQL", "md", "txt", "bin", "zip",
-  "tar", "gz", "png", "jpg", "jpeg", "gif", "svg", "webp", "ico", "mp3",
-  "mp4", "webm", "wav", "ogg", "pdf", "doc", "docx", "xls", "xlsx", "ppt",
-  "pptx", "csv", "tsv", "woff", "woff2", "ttf", "otf", "Server", "Client",
-  "Gateway", "Base", "online", "offline", "webhook", "webhooks", "Maintainer",
-  "Admin", "Captain", "Crew", "Room", "sub-SOP", "Sub-SOP", "send-back",
-  "Legacy", "China", "gmr", "alice", "Control", "plane", "Attribution",
-  "Software", "Completeness", "Repos", "fine-grained", "credentials",
-  "happy-path", "serialize", "instructions", "revision", "backfill",
-  "marketplace", "gh", "glab", "classic", "transport", "span", "Responses",
-  "Messages", "bcrypt", "Gitea", "native", "Vibe", "seatbelt", "bwrap",
-  "Enterprise", "Matcher", "Google", "Del", "Gate", "thinking", "Device",
-  "Flow", "OCI", "OTEL", "SkillHub", "PAT", "App", "done", "filesystem",
-  "tmpfs", "telemetry", "polling", "Prebuild", "scheduler", "guard",
-  "resolve", "ours", "theirs", "hash", "Swimlane", "iteration", "abort",
-  "tools", "payments", "root", "Directory", "Working", "medium", "low",
-  "none", "high", "Header", "Instance", "English", "Chinese", "Vietnamese", "production", "web", "Contents", "object", "servers", "array", "static", "name", "title", "description", "edges", "output", "task", "provider", "Pull", "group", "OCI", "SkillHub", "OTEL",
-  "xxx", // placeholder example token in docs
-].map((w) => w.toLowerCase());
+const ALLOWLIST_EXACT = [
+  "LoopForge",
+  "GitHub",
+  "GitLab",
+  "Git",
+  "Docker",
+  "Dockerfile",
+  "CodeBuddy",
+  "Cursor",
+  "Codex",
+  "Claude",
+  "OpenCode",
+  "Kimi",
+  "DeepSeek",
+  "Gemini",
+  "Antigravity",
+  "ZCode",
+  "Pi",
+  "Playwright",
+  "Chromium",
+  "Markdown",
+  "OAuth",
+  "WeCom",
+  "TAPD",
+  "Webhook",
+  "Agent",
+  "Skill",
+  "Rule",
+  "Bot",
+  "Token",
+  "token",
+  "Prompt",
+  "prompt",
+  "sandbox",
+  "workspace",
+  "commit",
+  "push",
+  "merge",
+  "branch",
+  "diff",
+  "patch",
+  "repo",
+  "Pipeline",
+  "runner",
+  "Studio",
+  "MySQL",
+  "Postgres",
+  "Redis",
+  "MinIO",
+  "Linux",
+  "macOS",
+  "Windows",
+  "Node",
+  "Python",
+  "Go",
+  "Shell",
+  "Bash",
+  "npm",
+  "React",
+  "Kubernetes",
+  "cron",
+  "OK",
+  "VI",
+  "EN",
+  "Tencent",
+  "Gongfeng",
+  "CNB",
+  "Slack",
+  "Discord",
+  "Telegram",
+  "Email",
+  "Chrome",
+  "Monaco",
+  "xterm",
+  "iframe",
+  "emoji",
+  "Enter",
+  "Esc",
+  "Ctrl",
+  "Cmd",
+  "Shift",
+  "Alt",
+  "P50",
+  "P90",
+  "P95",
+  "P99",
+  "KB",
+  "MB",
+  "GB",
+  "ms",
+  "Issue",
+  "Artifact",
+  "artifact",
+  "Artifacts",
+  // Product / protocol nouns used as labels in LoopForge UI
+  "Hook",
+  "hook",
+  "Hooks",
+  "hooks",
+  "PAT",
+  "IDE",
+  "Loop",
+  "agentflow",
+  "worker",
+  "Worker",
+  "proxy",
+  "zip",
+  "TB",
+  "PATH",
+  "alice",
+  "web",
+  "submit_gate_result",
+  "Harness",
+  "harness",
+  "checkout",
+  "fetch",
+  "lint",
+  "HTML",
+  "CSV",
+  "KPI",
+  "OCI",
+  "OTEL",
+  "SSO",
+  "CI",
+  "HEAD",
+  "bcrypt",
+  "gh",
+  "glab",
+  "md",
+  "xxx",
+  // Credential / product nouns used throughout the UI
+  "Key",
+  "Keys",
+  "Code",
+  "Plan",
+  "Feishu",
+  "SQLite",
+  "PHP",
+  "Anthropic",
+  "Messages",
+  "Bearer",
+  "OTLP",
+  "TTL",
+  "XHR",
+  "axios",
+  "origin",
+  "master",
+  "HOME",
+  "TMPDIR",
+  "UID",
+  "GID",
+  "CVM",
+  "EPP",
+  "Palworld",
+  "PM",
+  "ts",
+  "gmr",
+  "production",
+  "bin",
+  "cd",
+  "curl",
+  "cookie",
+  "servers",
+  "mcpServers",
+  "instructions",
+  "revision",
+  "span",
+  "sendBeacon",
+  "WebSocket",
+  "OpenAI",
+  "iOA",
+  "ck_",
+  "docs",
+  "Captain",
+  "captain",
+  "QTA",
+  "GPT",
+  "Gitea",
+  "PEM",
+  "GLM",
+  "Vibe",
+  "CNY",
+  "seatbelt",
+  "bwrap",
+  "AK",
+  "SK",
+  "Enterprise",
+  "Google",
+  "Del",
+  "png",
+  "jpeg",
+  "gif",
+  "webp",
+  "admin",
+  "RFC",
+  "stdio",
+  "Gate",
+  "rebase",
+  "pdf",
+  "OpenAPI",
+  // Common plural / variant forms of the same technical terms
+  "Agents",
+  "Skills",
+  "Rules",
+  "Bots",
+  "Tokens",
+  "Webhooks",
+  "SOPs",
+  "PRs",
+  "MRs",
+  "APIs",
+  "IDs",
+  "LLMs",
+  "URLs",
+  "Prompts",
+  "runners",
+  "workspaces",
+  "sandbox",
+  "Sandbox",
+  "Workspace",
+  "Pipeline",
+  "pipelines",
+  "commits",
+  "branches",
+  "repos",
+  "patches",
+  "diffs",
+];
+
+const ALLOWLIST_SET = new Set(ALLOWLIST_EXACT);
+const ALLOWLIST_LOWER = new Set(
+  ALLOWLIST_EXACT.filter((w) => !ACRONYMS.has(w.toUpperCase()) || w !== w.toUpperCase()).map(
+    (w) => w.toLowerCase(),
+  ),
+);
+// Keep exact forms for case-sensitive product names; lower lookup for the rest
+// except acronyms which are handled separately.
+for (const w of ALLOWLIST_EXACT) {
+  if (!ACRONYMS.has(w)) ALLOWLIST_LOWER.add(w.toLowerCase());
+}
+for (const w of BLACKLIST_SET) {
+  ALLOWLIST_SET.delete(w);
+  ALLOWLIST_LOWER.delete(w);
+}
 
 /**
  * Vietnamese tokens that are pure ASCII (no diacritics) and must not be
  * treated as English. Not an English allowlist.
  */
 const VI_ASCII = [
-  "theo", "trong", "cho", "khi", "sau", "sang", "giao", "trang", "chi",
-  "xem", "vai", "tin", "ghi", "chung", "thi", "tra", "sao", "ra", "truy",
-  "qua", "gian", "kho", "thu", "xong", "danh", "quy", "chia", "ngay",
-  "thay", "tri", "tham", "do", "dung", "quay", "sung", "quan", "minh",
-  "song", "khai", "thao", "hay", "cung", "nhanh", "nuoc", "con", "xung",
-  "roi", "lai", "nay", "cac", "mot", "nhung", "nhieu", "duoc", "viec",
-  "them", "hoac", "nhu", "vao", "tu", "cua", "va", "de", "co", "se", "da",
-  "la", "bao", "cao", "cap", "dat", "gap", "giu", "goi", "gui", "hoc",
-  "hop", "huong", "kem", "ket", "kieu", "lam", "lay", "lien", "loai",
-  "luc", "luon", "luong", "mat", "mau", "may", "moc", "moi", "muc", "nam",
-  "nen", "ngoai", "nguoi", "nhan", "nhap", "nhat", "nhom", "noi", "phan",
-  "phien", "phim", "phu", "phuc", "rut", "sach", "sai", "san", "sat",
-  "sen", "so", "sua", "tach", "tam", "tang", "tao", "tat", "thanh",
-  "thich", "thoi", "thong", "thuc", "tiep", "tim", "tinh", "toan", "toc",
-  "toi", "ton", "tru", "truoc", "tuc", "tung", "tuy", "uoc", "van", "vay",
-  "ve", "vi", "von", "vung", "vuot", "xac", "xay", "xoa", "xu", "xuat",
-  "xuong", "yeu", "ban", "bang", "bat", "ben", "bi", "bien", "biet",
-  "binh", "bo", "buoc", "ca", "cai", "cam", "can", "cang", "cat", "cau",
-  "cay", "chan", "chap", "chat", "che", "chen", "chinh", "choi", "chon",
-  "chu", "chua", "chuc", "chuyen", "cong", "cot", "cu", "cuoc", "cuoi",
-  "cuon", "dai", "dam", "dan", "dang", "dao", "dau", "day", "dem", "den",
-  "dep", "di", "dia", "dich", "dieu", "doc", "doi", "don", "dong", "dot",
-  "du", "dua", "duc", "dun", "duoi", "duong", "duyet", "em", "ep", "gai",
-  "gan", "gao", "gat", "gay", "ghe", "gia", "giam", "gieo", "gio", "gioi",
-  "giua", "giup", "go", "goc", "gom", "gon", "got", "ha", "hai", "ham",
-  "han", "hang", "hao", "hap", "hat", "he", "hen", "hep", "het", "hieu",
-  "hinh", "ho", "hoa", "hoai", "hoan", "hoang", "hoat", "hoi", "hom",
-  "hon", "hong", "hot", "hua", "hue", "hung", "huu", "huy", "huyen",
-  "ich", "ke", "ken", "keo", "kep", "kha", "khac", "khach", "kham",
-  "khan", "khang", "khao", "khat", "khe", "khen", "kheo", "khi", "khich",
-  "khiem", "khien", "khiep", "kho", "khoa", "khoan", "khoang", "khoc",
-  "khoi", "khon", "khong", "khop", "khu", "khuc", "khung", "khuon",
-  "khuong", "khuy", "khuyen", "ki", "kich", "kiem", "kien", "kiep",
-  "kiet", "kim", "kin", "kinh", "kip", "ky", "lac", "lai", "lan", "lang",
-  "lanh", "lao", "lap", "lat", "lau", "le", "len", "leo", "li", "lich",
-  "liem", "liep", "liet", "lieu", "lin", "linh", "lo", "loa", "loan",
-  "loc", "loi", "lom", "lon", "long", "lop", "lot", "lu", "lua", "luc",
-  "lui", "lung", "luoc", "luoi", "luom", "luot", "luu", "luy", "luyen",
-  "ly", "ma", "mac", "mai", "mam", "man", "mang", "manh", "mao", "map",
-  "me", "mem", "men", "meo", "met", "mi", "mien", "mieu", "mim", "mo",
-  "moc", "moi", "mom", "mon", "mong", "mot", "mu", "mua", "muc", "mui",
-  "mun", "mung", "muoi", "muon", "muong", "my", "na", "nai", "nan",
-  "nang", "nao", "nap", "nat", "ne", "nem", "neo", "nep", "net", "nga",
-  "ngai", "ngam", "ngan", "ngang", "ngao", "ngap", "ngat", "ngay",
-  "nghe", "nghi", "nghia", "nghich", "nghiem", "nghien", "nghiep",
-  "nghiet", "nghin", "nghinh", "ngo", "ngoa", "ngoai", "ngoan", "ngoc",
-  "ngoi", "ngon", "ngong", "ngot", "ngu", "ngua", "nguc", "ngung",
-  "nguoc", "nguoi", "nguon", "nguy", "nguyen", "nha", "nhac", "nhai",
-  "nham", "nhan", "nhang", "nhao", "nhap", "nhat", "nhau", "nhay", "nhe",
-  "nheo", "nhet", "nhi", "nhiem", "nhien", "nhiep", "nhiet", "nhieu",
-  "nhim", "nhin", "nhinh", "nhip", "nho", "nhoc", "nhoi", "nhom", "nhon",
-  "nhong", "nhot", "nhu", "nhuc", "nhung", "nhuoc", "nhuom", "nhuong",
-  "nhuy", "nhuyen", "ni", "niem", "nien", "nip", "no", "noi", "nom",
-  "non", "nong", "nop", "nu", "nua", "nuc", "nui", "nung", "nuoc", "nuoi",
-  "nuong", "nuot", "o", "oc", "oi", "om", "on", "ong", "op", "ot", "pha",
-  "phac", "phai", "pham", "phan", "phang", "phao", "phap", "phat", "phau",
-  "phay", "phe", "phen", "phep", "phet", "phi", "phich", "phien", "phiep",
-  "phiet", "phieu", "phim", "phin", "phinh", "pho", "phoa", "phoi",
-  "phom", "phon", "phong", "phot", "phu", "phuc", "phun", "phung",
-  "phuoc", "phuong", "phuy", "phuyen", "qa", "qu", "qua", "quai", "quan",
-  "quang", "quat", "quay", "que", "quen", "quet", "qui", "quoc", "quy",
-  "quyen", "quyet", "ra", "rac", "rai", "ram", "ran", "rang", "rao",
-  "rap", "rat", "rau", "ray", "re", "ren", "reo", "ret", "ri", "ria",
-  "rich", "riet", "rieu", "rim", "rin", "rinh", "ro", "roi", "rom", "ron",
-  "rong", "rot", "ru", "rua", "ruc", "rui", "rum", "run", "rung", "ruoc",
-  "ruoi", "ruong", "ruot", "ruou", "ruy", "sa", "sac", "sai", "sam", "san",
-  "sang", "sao", "sap", "sat", "sau", "say", "se", "sen", "set", "si",
-  "sich", "sieu", "sim", "sin", "sinh", "so", "soa", "soan", "soat",
-  "soc", "soi", "som", "son", "song", "sot", "su", "sua", "suc", "sui",
-  "sum", "sun", "sung", "suoi", "suon", "suong", "suot", "suy", "ta",
-  "tac", "tai", "tam", "tan", "tang", "tao", "tap", "tat", "tau", "tay",
-  "te", "tem", "ten", "teo", "tep", "tet", "tha", "thac", "thai", "tham",
-  "than", "thang", "thanh", "thao", "thap", "that", "thau", "thay", "the",
-  "them", "then", "theo", "thep", "thi", "thia", "thich", "thiem",
-  "thien", "thiep", "thiet", "thieu", "thin", "thinh", "tho", "thoa",
-  "thoai", "thoat", "thoc", "thoi", "thom", "thon", "thong", "thot",
-  "thu", "thua", "thuc", "thue", "thui", "thun", "thung", "thuoc",
-  "thuong", "thuy", "thuyen", "ti", "tia", "tich", "tiem", "tien", "tiep",
-  "tiet", "tieu", "tim", "tin", "tinh", "to", "toa", "toan", "toc", "toi",
-  "tom", "ton", "tong", "tot", "tra", "trac", "trai", "tram", "tran",
-  "trang", "trao", "trat", "trau", "tre", "trem", "tren", "treo", "tri",
-  "trich", "trien", "triet", "trieu", "trim", "trin", "trinh", "tro",
-  "troi", "trom", "tron", "trong", "trot", "tru", "trua", "truc", "trui",
-  "trum", "trun", "trung", "truoc", "truong", "truot", "truy", "truyen",
-  "tu", "tua", "tuc", "tui", "tum", "tun", "tung", "tuoc", "tuoi", "tuon",
-  "tuong", "tuot", "tuy", "tuyen", "tuyet", "ty", "u", "ua", "uc", "ui",
-  "um", "un", "ung", "uoc", "uoi", "uon", "uong", "uot", "uu", "uy",
-  "uyen", "uyet", "va", "vac", "vai", "vam", "van", "vang", "vao", "vap",
-  "vat", "vay", "ve", "vem", "ven", "veo", "vet", "vi", "via", "viem",
-  "vien", "viet", "viec", "vim", "vin", "vinh", "vo", "voc", "voi", "vom",
-  "von", "vong", "vot", "vu", "vua", "vuc", "vui", "vun", "vung", "vuot",
-  "vuong", "vy", "xa", "xac", "xai", "xam", "xan", "xang", "xao", "xap",
-  "xat", "xau", "xay", "xe", "xem", "xen", "xeo", "xep", "xet", "xi",
-  "xich", "xim", "xin", "xinh", "xiu", "xo", "xoa", "xoai", "xoan", "xoc",
-  "xoi", "xom", "xon", "xong", "xot", "xu", "xua", "xuc", "xui", "xum",
-  "xun", "xung", "xuoi", "xuong", "xuy", "xuyen", "y", "yeu",
-  "giai", "ba", "duy", "cha", "ranh", "traqua", "modeldanh",
-  "an", "Anh", "ghim", "Ghim",
+  "theo",
+  "trong",
+  "cho",
+  "khi",
+  "sau",
+  "sang",
+  "giao",
+  "trang",
+  "chi",
+  "xem",
+  "vai",
+  "tin",
+  "ghi",
+  "chung",
+  "thi",
+  "tra",
+  "sao",
+  "ra",
+  "truy",
+  "qua",
+  "gian",
+  "kho",
+  "thu",
+  "xong",
+  "danh",
+  "quy",
+  "chia",
+  "ngay",
+  "thay",
+  "tri",
+  "tham",
+  "do",
+  "dung",
+  "quay",
+  "sung",
+  "quan",
+  "minh",
+  "song",
+  "khai",
+  "thao",
+  "hay",
+  "cung",
+  "nhanh",
+  "nuoc",
+  "con",
+  "xung",
+  "roi",
+  "lai",
+  "nay",
+  "cac",
+  "mot",
+  "nhung",
+  "nhieu",
+  "duoc",
+  "viec",
+  "them",
+  "hoac",
+  "nhu",
+  "vao",
+  "tu",
+  "cua",
+  "va",
+  "de",
+  "co",
+  "se",
+  "da",
+  "la",
+  "bao",
+  "cao",
+  "cap",
+  "dat",
+  "gap",
+  "giu",
+  "goi",
+  "gui",
+  "hoc",
+  "hop",
+  "huong",
+  "kem",
+  "ket",
+  "kieu",
+  "lam",
+  "lay",
+  "lien",
+  "loai",
+  "luc",
+  "luon",
+  "luong",
+  "mat",
+  "mau",
+  "may",
+  "moc",
+  "moi",
+  "muc",
+  "nam",
+  "nen",
+  "ngoai",
+  "nguoi",
+  "nhan",
+  "nhap",
+  "nhat",
+  "nhom",
+  "noi",
+  "phan",
+  "phien",
+  "phim",
+  "phu",
+  "phuc",
+  "rut",
+  "sach",
+  "sai",
+  "san",
+  "sat",
+  "sen",
+  "so",
+  "sua",
+  "tach",
+  "tam",
+  "tang",
+  "tao",
+  "tat",
+  "thanh",
+  "thich",
+  "thoi",
+  "thong",
+  "thuc",
+  "tiep",
+  "tim",
+  "tinh",
+  "toan",
+  "toc",
+  "toi",
+  "ton",
+  "tru",
+  "truoc",
+  "tuc",
+  "tung",
+  "tuy",
+  "uoc",
+  "van",
+  "vay",
+  "ve",
+  "vi",
+  "von",
+  "vung",
+  "vuot",
+  "xac",
+  "xay",
+  "xoa",
+  "xu",
+  "xuat",
+  "xuong",
+  "yeu",
+  "ban",
+  "bang",
+  "bat",
+  "ben",
+  "bi",
+  "bien",
+  "biet",
+  "binh",
+  "bo",
+  "buoc",
+  "ca",
+  "cai",
+  "cam",
+  "can",
+  "cang",
+  "cat",
+  "cau",
+  "cay",
+  "chan",
+  "chap",
+  "chat",
+  "che",
+  "chen",
+  "chinh",
+  "choi",
+  "chon",
+  "chu",
+  "chua",
+  "chuc",
+  "chuyen",
+  "cong",
+  "cot",
+  "cu",
+  "cuoc",
+  "cuoi",
+  "cuon",
+  "dai",
+  "dam",
+  "dan",
+  "dang",
+  "dao",
+  "dau",
+  "day",
+  "dem",
+  "den",
+  "dep",
+  "di",
+  "dia",
+  "dich",
+  "dieu",
+  "doc",
+  "doi",
+  "don",
+  "dong",
+  "dot",
+  "du",
+  "dua",
+  "duc",
+  "dun",
+  "duoi",
+  "duong",
+  "duyet",
+  "em",
+  "ep",
+  "gai",
+  "gan",
+  "gao",
+  "gat",
+  "gay",
+  "ghe",
+  "gia",
+  "giam",
+  "gieo",
+  "gio",
+  "gioi",
+  "giua",
+  "giup",
+  "go",
+  "goc",
+  "gom",
+  "gon",
+  "got",
+  "ha",
+  "hai",
+  "ham",
+  "han",
+  "hang",
+  "hao",
+  "hap",
+  "hat",
+  "he",
+  "hen",
+  "hep",
+  "het",
+  "hieu",
+  "hinh",
+  "ho",
+  "hoa",
+  "hoai",
+  "hoan",
+  "hoang",
+  "hoat",
+  "hoi",
+  "hom",
+  "hon",
+  "hong",
+  "hot",
+  "hua",
+  "hue",
+  "hung",
+  "huu",
+  "huy",
+  "huyen",
+  "ich",
+  "ke",
+  "ken",
+  "keo",
+  "kep",
+  "kha",
+  "khac",
+  "khach",
+  "kham",
+  "khan",
+  "khang",
+  "khao",
+  "khat",
+  "khe",
+  "khen",
+  "kheo",
+  "khi",
+  "khich",
+  "khiem",
+  "khien",
+  "khiep",
+  "kho",
+  "khoa",
+  "khoan",
+  "khoang",
+  "khoc",
+  "khoi",
+  "khon",
+  "khong",
+  "khop",
+  "khu",
+  "khuc",
+  "khung",
+  "khuon",
+  "khuong",
+  "khuy",
+  "khuyen",
+  "ki",
+  "kich",
+  "kiem",
+  "kien",
+  "kiep",
+  "kiet",
+  "kim",
+  "kin",
+  "kinh",
+  "kip",
+  "ky",
+  "lac",
+  "lai",
+  "lan",
+  "lang",
+  "lanh",
+  "lao",
+  "lap",
+  "lat",
+  "lau",
+  "le",
+  "len",
+  "leo",
+  "li",
+  "lich",
+  "liem",
+  "liep",
+  "liet",
+  "lieu",
+  "lin",
+  "linh",
+  "lo",
+  "loa",
+  "loan",
+  "loc",
+  "loi",
+  "lom",
+  "lon",
+  "long",
+  "lop",
+  "lot",
+  "lu",
+  "lua",
+  "luc",
+  "lui",
+  "lung",
+  "luoc",
+  "luoi",
+  "luom",
+  "luot",
+  "luu",
+  "luy",
+  "luyen",
+  "ly",
+  "ma",
+  "mac",
+  "mai",
+  "mam",
+  "man",
+  "mang",
+  "manh",
+  "mao",
+  "map",
+  "me",
+  "mem",
+  "men",
+  "meo",
+  "met",
+  "mi",
+  "mien",
+  "mieu",
+  "mim",
+  "mo",
+  "moc",
+  "moi",
+  "mom",
+  "mon",
+  "mong",
+  "mot",
+  "mu",
+  "mua",
+  "muc",
+  "mui",
+  "mun",
+  "mung",
+  "muoi",
+  "muon",
+  "muong",
+  "my",
+  "na",
+  "nai",
+  "nan",
+  "nang",
+  "nao",
+  "nap",
+  "nat",
+  "ne",
+  "nem",
+  "neo",
+  "nep",
+  "net",
+  "nga",
+  "ngai",
+  "ngam",
+  "ngan",
+  "ngang",
+  "ngao",
+  "ngap",
+  "ngat",
+  "ngay",
+  "nghe",
+  "nghi",
+  "nghia",
+  "nghich",
+  "nghiem",
+  "nghien",
+  "nghiep",
+  "nghiet",
+  "nghin",
+  "nghinh",
+  "ngo",
+  "ngoa",
+  "ngoai",
+  "ngoan",
+  "ngoc",
+  "ngoi",
+  "ngon",
+  "ngong",
+  "ngot",
+  "ngu",
+  "ngua",
+  "nguc",
+  "ngung",
+  "nguoc",
+  "nguoi",
+  "nguon",
+  "nguy",
+  "nguyen",
+  "nha",
+  "nhac",
+  "nhai",
+  "nham",
+  "nhan",
+  "nhang",
+  "nhao",
+  "nhap",
+  "nhat",
+  "nhau",
+  "nhay",
+  "nhe",
+  "nheo",
+  "nhet",
+  "nhi",
+  "nhiem",
+  "nhien",
+  "nhiep",
+  "nhiet",
+  "nhieu",
+  "nhim",
+  "nhin",
+  "nhinh",
+  "nhip",
+  "nho",
+  "nhoc",
+  "nhoi",
+  "nhom",
+  "nhon",
+  "nhong",
+  "nhot",
+  "nhu",
+  "nhuc",
+  "nhung",
+  "nhuoc",
+  "nhuom",
+  "nhuong",
+  "nhuy",
+  "nhuyen",
+  "ni",
+  "niem",
+  "nien",
+  "nip",
+  "no",
+  "noi",
+  "nom",
+  "non",
+  "nong",
+  "nop",
+  "nu",
+  "nua",
+  "nuc",
+  "nui",
+  "nung",
+  "nuoc",
+  "nuoi",
+  "nuong",
+  "nuot",
+  "o",
+  "oc",
+  "oi",
+  "om",
+  "on",
+  "ong",
+  "op",
+  "ot",
+  "pha",
+  "phac",
+  "phai",
+  "pham",
+  "phan",
+  "phang",
+  "phao",
+  "phap",
+  "phat",
+  "phau",
+  "phay",
+  "phe",
+  "phen",
+  "phep",
+  "phet",
+  "phi",
+  "phich",
+  "phien",
+  "phiep",
+  "phiet",
+  "phieu",
+  "phim",
+  "phin",
+  "phinh",
+  "pho",
+  "phoa",
+  "phoi",
+  "phom",
+  "phon",
+  "phong",
+  "phot",
+  "phu",
+  "phuc",
+  "phun",
+  "phung",
+  "phuoc",
+  "phuong",
+  "phuy",
+  "phuyen",
+  "qua",
+  "quai",
+  "quan",
+  "quang",
+  "quat",
+  "quay",
+  "que",
+  "quen",
+  "quet",
+  "qui",
+  "quoc",
+  "quy",
+  "quyen",
+  "quyet",
+  "ra",
+  "rac",
+  "rai",
+  "ram",
+  "ran",
+  "rang",
+  "rao",
+  "rap",
+  "rat",
+  "rau",
+  "ray",
+  "re",
+  "ren",
+  "reo",
+  "ret",
+  "ri",
+  "ria",
+  "rich",
+  "riet",
+  "rieu",
+  "rim",
+  "rin",
+  "rinh",
+  "ro",
+  "roi",
+  "rom",
+  "ron",
+  "rong",
+  "rot",
+  "ru",
+  "rua",
+  "ruc",
+  "rui",
+  "rum",
+  "run",
+  "rung",
+  "ruoc",
+  "ruoi",
+  "ruong",
+  "ruot",
+  "ruou",
+  "ruy",
+  "sa",
+  "sac",
+  "sai",
+  "sam",
+  "san",
+  "sang",
+  "sao",
+  "sap",
+  "sat",
+  "sau",
+  "say",
+  "se",
+  "sen",
+  "set",
+  "si",
+  "sich",
+  "sieu",
+  "sim",
+  "sin",
+  "sinh",
+  "so",
+  "soa",
+  "soan",
+  "soat",
+  "soc",
+  "soi",
+  "som",
+  "son",
+  "song",
+  "sot",
+  "su",
+  "sua",
+  "suc",
+  "sui",
+  "sum",
+  "sun",
+  "sung",
+  "suoi",
+  "suon",
+  "suong",
+  "suot",
+  "suy",
+  "ta",
+  "tac",
+  "tai",
+  "tam",
+  "tan",
+  "tang",
+  "tao",
+  "tap",
+  "tat",
+  "tau",
+  "tay",
+  "te",
+  "tem",
+  "ten",
+  "teo",
+  "tep",
+  "tet",
+  "tha",
+  "thac",
+  "thai",
+  "tham",
+  "than",
+  "thang",
+  "thanh",
+  "thao",
+  "thap",
+  "that",
+  "thau",
+  "thay",
+  "the",
+  "them",
+  "then",
+  "theo",
+  "thep",
+  "thi",
+  "thia",
+  "thich",
+  "thiem",
+  "thien",
+  "thiep",
+  "thiet",
+  "thieu",
+  "thin",
+  "thinh",
+  "tho",
+  "thoa",
+  "thoai",
+  "thoat",
+  "thoc",
+  "thoi",
+  "thom",
+  "thon",
+  "thong",
+  "thot",
+  "thu",
+  "thua",
+  "thuc",
+  "thue",
+  "thui",
+  "thun",
+  "thung",
+  "thuoc",
+  "thuong",
+  "thuy",
+  "thuyen",
+  "ti",
+  "tia",
+  "tich",
+  "tiem",
+  "tien",
+  "tiep",
+  "tiet",
+  "tieu",
+  "tim",
+  "tin",
+  "tinh",
+  "to",
+  "toa",
+  "toan",
+  "toc",
+  "toi",
+  "tom",
+  "ton",
+  "tong",
+  "tot",
+  "tra",
+  "trac",
+  "trai",
+  "tram",
+  "tran",
+  "trang",
+  "trao",
+  "trat",
+  "trau",
+  "tre",
+  "trem",
+  "tren",
+  "treo",
+  "tri",
+  "trich",
+  "trien",
+  "triet",
+  "trieu",
+  "trim",
+  "trin",
+  "trinh",
+  "tro",
+  "troi",
+  "trom",
+  "tron",
+  "trong",
+  "trot",
+  "tru",
+  "trua",
+  "truc",
+  "trui",
+  "trum",
+  "trun",
+  "trung",
+  "truoc",
+  "truong",
+  "truot",
+  "truy",
+  "truyen",
+  "tu",
+  "tua",
+  "tuc",
+  "tui",
+  "tum",
+  "tun",
+  "tung",
+  "tuoc",
+  "tuoi",
+  "tuon",
+  "tuong",
+  "tuot",
+  "tuy",
+  "tuyen",
+  "tuyet",
+  "ty",
+  "u",
+  "ua",
+  "uc",
+  "ui",
+  "um",
+  "un",
+  "ung",
+  "uoc",
+  "uoi",
+  "uon",
+  "uong",
+  "uot",
+  "uu",
+  "uy",
+  "uyen",
+  "uyet",
+  "va",
+  "vac",
+  "vai",
+  "vam",
+  "van",
+  "vang",
+  "vao",
+  "vap",
+  "vat",
+  "vay",
+  "ve",
+  "vem",
+  "ven",
+  "veo",
+  "vet",
+  "vi",
+  "via",
+  "viem",
+  "vien",
+  "viet",
+  "viec",
+  "vim",
+  "vin",
+  "vinh",
+  "vo",
+  "voc",
+  "voi",
+  "vom",
+  "von",
+  "vong",
+  "vot",
+  "vu",
+  "vua",
+  "vuc",
+  "vui",
+  "vun",
+  "vung",
+  "vuot",
+  "vuong",
+  "vy",
+  "xa",
+  "xac",
+  "xai",
+  "xam",
+  "xan",
+  "xang",
+  "xao",
+  "xap",
+  "xat",
+  "xau",
+  "xay",
+  "xe",
+  "xem",
+  "xen",
+  "xeo",
+  "xep",
+  "xet",
+  "xi",
+  "xich",
+  "xim",
+  "xin",
+  "xinh",
+  "xiu",
+  "xo",
+  "xoa",
+  "xoai",
+  "xoan",
+  "xoc",
+  "xoi",
+  "xom",
+  "xon",
+  "xong",
+  "xot",
+  "xu",
+  "xua",
+  "xuc",
+  "xui",
+  "xum",
+  "xun",
+  "xung",
+  "xuoi",
+  "xuong",
+  "xuy",
+  "xuyen",
+  "y",
+  "yeu",
+  "giai",
+  "ba",
+  "duy",
+  "cha",
+  "ranh",
+  "an",
+  "anh",
+  "ghim",
 ].map((w) => w.toLowerCase());
-
-const ALLOWLIST_SET = new Set(ALLOWLIST);
 const VI_ASCII_SET = new Set(VI_ASCII);
-for (const w of BLACKLIST_SET) ALLOWLIST_SET.delete(w);
 
-function loadDict(relPath, globalName) {
-  const code = readFileSync(join(REPO, relPath), "utf8");
-  const ctx = createContext({ window: {} });
-  runInContext(code, ctx, { filename: relPath });
-  const dict = ctx.window[globalName];
-  if (!dict || typeof dict !== "object") {
-    throw new Error(`Failed to load ${globalName} from ${relPath}`);
+// Vietnamese syllable: onset + nucleus (+ coda). At most one tone per syllable.
+const VI_ONSETS = [
+  "ngh",
+  "ng",
+  "nh",
+  "gh",
+  "gi",
+  "kh",
+  "ph",
+  "th",
+  "tr",
+  "ch",
+  "qu",
+  "b",
+  "c",
+  "d",
+  "đ",
+  "g",
+  "h",
+  "k",
+  "l",
+  "m",
+  "n",
+  "p",
+  "q",
+  "r",
+  "s",
+  "t",
+  "v",
+  "x",
+  "",
+];
+const VI_CODAS = ["nh", "ng", "ch", "c", "m", "n", "p", "t", ""];
+/** Tone-stripped nuclei (ăâêôơư kept via precomposed forms after NFD strip of tone only). */
+const VI_NUCLEI = new Set([
+  "a",
+  "ă",
+  "â",
+  "e",
+  "ê",
+  "i",
+  "o",
+  "ô",
+  "ơ",
+  "u",
+  "ư",
+  "y",
+  "ai",
+  "ao",
+  "au",
+  "ay",
+  "âu",
+  "ây",
+  "eo",
+  "êu",
+  "ia",
+  "iê",
+  "iu",
+  "oa",
+  "oă",
+  "oe",
+  "oi",
+  "oo",
+  "ôi",
+  "ơi",
+  "ua",
+  "uâ",
+  "uê",
+  "ui",
+  "uo",
+  "uô",
+  "ươi",
+  "ưa",
+  "ươ",
+  "ưu",
+  "uy",
+  "uya",
+  "uyu",
+  "uyê",
+  "yê",
+  "iêu",
+  "yêu",
+  "uôi",
+  "ươu",
+  "oai",
+  "oao",
+  "oay",
+  "uai",
+  "uay",
+  "oeo",
+  "uya",
+  "uyu",
+  "ia",
+  "iê",
+  "yê",
+  "ưu",
+  "ươ",
+  "ưa",
+]);
+
+function stripToneKeepAmbi(s) {
+  // Remove tone marks only (grave/acute/hook/tilde/dot). Keep breve,
+  // circumflex, and horn so ăâêôơư stay distinct from aeiou.
+  return s
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300\u0301\u0303\u0309\u0323]/g, "")
+    .normalize("NFC");
+}
+
+function countToneMarks(word) {
+  let n = 0;
+  for (const ch of word.normalize("NFD")) {
+    if (
+      ch === "\u0300" ||
+      ch === "\u0301" ||
+      ch === "\u0303" ||
+      ch === "\u0309" ||
+      ch === "\u0323"
+    ) {
+      n += 1;
+    }
   }
-  return dict;
+  return n;
+}
+
+function isViSyllable(syll) {
+  if (!syll || syll.length > 9) return false;
+  const s = syll.toLowerCase();
+  // One syllable carries at most one tone.
+  if (countToneMarks(s) > 1) return false;
+  const folded = stripToneKeepAmbi(s).replace(/đ/g, "đ");
+  for (const onset of VI_ONSETS) {
+    if (!folded.startsWith(onset)) continue;
+    // Prefer longer onsets (list is longest-first).
+    const rest = folded.slice(onset.length);
+    for (const coda of VI_CODAS) {
+      if (coda && !rest.endsWith(coda)) continue;
+      if (!coda && /(?:nh|ng|ch|[cmnpt])$/.test(rest) && rest.length > 1) {
+        // Still try empty coda; longer coda attempts come first in list.
+      }
+      const nucleus = rest.slice(0, rest.length - coda.length);
+      if (!nucleus) continue;
+      if (VI_NUCLEI.has(nucleus)) return true;
+    }
+  }
+  return false;
+}
+
+/** True when word with Vietnamese diacritics looks like ≥2 glued syllables. */
+function isGluedViWord(word) {
+  if (!VI_LETTER.test(word)) return false;
+  if (word.length < 4) return false;
+  // Mixed Vietnamese + tech/ASCII token (e.g. tảirepository, phiênCLI).
+  // - ANY uppercase acronym run (≥2) next to Vietnamese diacritics
+  // - lowercase ASCII run ≥5 (repository, sandbox, …)
+  // Ignore short lowercase runs that are undiacritic parts of a syllable
+  // (ang in đang, ngo in ngoài, …).
+  if (/[A-Z]{2,}/.test(word)) return true;
+  const lowerRuns = word.match(/[a-z]+/g) || [];
+  if (lowerRuns.some((r) => r.length >= 5)) return true;
+  // ≥2 tone-marked vowels in one undivided word → glued.
+  if (countToneMarks(word) >= 2) return true;
+  // Single valid syllable → OK.
+  if (isViSyllable(word)) return false;
+  // Short tokens are usually one syllable our table may miss — do not flag.
+  if (word.length < 6) return false;
+  // Segment into ≥2 valid syllables (whole word not a single syllable).
+  const lower = word.toLowerCase();
+  return canSegmentAll(lower) && !isViSyllable(lower);
+}
+
+function canSegmentAll(word) {
+  if (!word) return true;
+  if (isViSyllable(word)) return true;
+  // Prefer shorter left syllables first (avoids false "cóp"/"giaot" nuclei).
+  for (let i = 2; i <= Math.min(word.length - 2, 7); i++) {
+    const left = word.slice(0, i);
+    const right = word.slice(i);
+    if (isViSyllable(left) && canSegmentAll(right)) return true;
+  }
+  return false;
+}
+
+const PLACEHOLDER_RE =
+  /(\{\{[^{}]+\}\}|\$\{[^{}]+\}|\{[^{}]+\}|%[0-9]*[sdvwqx])/g;
+
+function extractPlaceholders(text) {
+  if (typeof text !== "string") return [];
+  const out = [];
+  let m;
+  PLACEHOLDER_RE.lastIndex = 0;
+  while ((m = PLACEHOLDER_RE.exec(text)) !== null) {
+    out.push({ raw: m[0], index: m.index, end: m.index + m[0].length });
+  }
+  return out;
+}
+
+function isLetterChar(ch) {
+  return ch != null && UNICODE_LETTER.test(ch);
+}
+
+function isSpaceOrPunctOrEdge(ch, atEdge) {
+  if (atEdge || ch == null || ch === "") return true;
+  if (/\s/.test(ch)) return true;
+  // Punctuation / symbols (not letters or digits)
+  if (!isLetterChar(ch) && !/[0-9]/.test(ch)) return true;
+  return false;
+}
+
+function checkPlaceholders(value) {
+  const issues = [];
+  const phs = extractPlaceholders(value);
+  for (const ph of phs) {
+    const before = ph.index === 0 ? null : value[ph.index - 1];
+    const after = ph.end >= value.length ? null : value[ph.end];
+    // Letter glued to placeholder on either side.
+    if (isLetterChar(before) || isLetterChar(after)) {
+      issues.push({ type: "placeholder", detail: ph.raw });
+      continue;
+    }
+    // Colon immediately before placeholder without space → require ": %s".
+    if (before === ":") {
+      issues.push({ type: "placeholder", detail: `:${ph.raw}` });
+    }
+  }
+  return issues;
+}
+
+function placeholderSignature(text) {
+  return extractPlaceholders(text).map((p) => {
+    if (p.raw.startsWith("{{")) return "{{}}";
+    if (p.raw.startsWith("${")) return "${}";
+    if (p.raw.startsWith("{")) return "{}";
+    return p.raw.replace(/[0-9]+/, ""); // %s / %d / %v / %w
+  });
+}
+
+function checkPlaceholderParity(key, value) {
+  const k = placeholderSignature(key);
+  const v = placeholderSignature(value);
+  if (k.length !== v.length) {
+    return [{ type: "placeholder", detail: `count key=${k.length} value=${v.length}` }];
+  }
+  // Compare multiset of kinds
+  const sortJoin = (arr) => [...arr].sort().join(",");
+  if (sortJoin(k) !== sortJoin(v)) {
+    return [{ type: "placeholder", detail: `mismatch key=[${k}] value=[${v}]` }];
+  }
+  return [];
 }
 
 function maskIgnored(value) {
   let s = value;
   s = s.replace(/\$\{[^}]*\}/g, " ");
+  s = s.replace(/\{\{[^}]*\}\}/g, " ");
   s = s.replace(/\{[^}]*\}/g, " ");
-  s = s.replace(/%[0-9]*[sdif]/g, " ");
+  s = s.replace(/%[0-9]*[sdvwqx]/g, " ");
   s = s.replace(/`[^`]*`/g, " ");
   s = s.replace(/https?:\/\/\S+/gi, " ");
   s = s.replace(/\b(?:mailto|ssh|git):\/\/\S+/gi, " ");
   s = s.replace(/(?:^|[\s(])(?:\.?\.?\/|~\/)[\w./-]+/g, " ");
   s = s.replace(/\b[\w-]+\.[A-Za-z0-9._-]{1,24}\b/g, " ");
-  // kebab-case technical ids / package paths (generic-backend, feature/my-feature)
   s = s.replace(/\b[A-Za-z][A-Za-z0-9]*(?:-[A-Za-z0-9]+)+\b/g, " ");
   s = s.replace(/\b[A-Za-z]+(?:_[A-Za-z0-9]+)+\b/g, " ");
   s = s.replace(/\b[a-z]+(?:[A-Z][a-z0-9]*)+\b/g, " ");
   s = s.replace(/\b[A-Z][a-z]+(?:[A-Z][a-z0-9]*)+\b/g, " ");
-  // HTML attribute fragments commonly embedded in dictionary values
-  s = s.replace(/\b(?:rel|src|href|target|class|style|type|name|id|role|aria-[a-z-]+)\s*=\s*(?:"[^"]*"|'[^']*'|"|"|'|')/gi, " ");
-  // Shell one-liners kept as command examples
+  s = s.replace(
+    /\b(?:rel|src|href|target|class|style|type|name|id|role|aria-[a-z-]+)\s*=\s*(?:"[^"]*"|'[^']*'|"|"|'|')/gi,
+    " ",
+  );
   s = s.replace(/\bsh\s+-c\s+'[^']*'/g, " ");
   s = s.replace(/\bprintf\s+'[^']*'/g, " ");
   return s;
 }
 
-function isAllCapsShort(word) {
-  return /^[A-Z]{1,6}$/.test(word);
+function isVersionToken(word) {
+  return /^v\d+(?:\.\d+)*$/i.test(word);
 }
 
 function isUnicodeLetter(ch) {
   if (!ch) return false;
-  return (
-    VI_LETTER.test(ch) ||
-    (UNICODE_LETTER.test(ch) && !/[A-Za-z]/.test(ch))
-  );
+  return VI_LETTER.test(ch) || (UNICODE_LETTER.test(ch) && !/[A-Za-z]/.test(ch));
 }
 
 function extractAsciiWords(value) {
@@ -340,12 +1612,62 @@ function extractAsciiWords(value) {
     if (isUnicodeLetter(masked[start - 1]) || isUnicodeLetter(masked[end])) {
       continue;
     }
-    out.push(word);
+    out.push({ word, start, end, masked });
   }
   return out;
 }
 
-function checkValue(_key, value) {
+function isAllowedTerm(word) {
+  if (ACRONYMS.has(word)) return true;
+  if (ALLOWLIST_SET.has(word)) return true;
+  if (ALLOWLIST_LOWER.has(word.toLowerCase()) && !ACRONYMS.has(word.toUpperCase())) {
+    return true;
+  }
+  if (isVersionToken(word)) return true;
+  return false;
+}
+
+function checkGlued(value) {
+  const issues = [];
+  LETTER_RUN.lastIndex = 0;
+  let m;
+  while ((m = LETTER_RUN.exec(value)) !== null) {
+    const word = m[0];
+    if (isGluedViWord(word)) {
+      issues.push({ type: "dính", detail: word });
+    }
+  }
+  return issues;
+}
+
+function checkCalques(value) {
+  const issues = [];
+  for (const calque of CALQUES) {
+    if (value.includes(calque)) {
+      issues.push({ type: "calque", detail: calque });
+    }
+  }
+  for (const { re, detail } of CALQUE_RES) {
+    re.lastIndex = 0;
+    if (re.test(value)) {
+      issues.push({ type: "calque", detail });
+    }
+  }
+  // "của bạn" immediately after an English (ASCII) word
+  const re = /\b([A-Za-z][A-Za-z'’\-]*)\s+của bạn\b/g;
+  let m;
+  while ((m = re.exec(value)) !== null) {
+    issues.push({ type: "calque", detail: `${m[1]} của bạn` });
+  }
+  return issues;
+}
+
+/**
+ * Check a single dictionary value. When key is provided, also verify
+ * placeholder parity against the Chinese/source key.
+ * @returns {{type: string, detail: string}[]}
+ */
+export function checkValue(key, value) {
   const issues = [];
   if (typeof value !== "string") {
     issues.push({ type: "non-string", detail: typeof value });
@@ -361,19 +1683,30 @@ function checkValue(_key, value) {
   if (CJK_PUNCT.test(value)) {
     issues.push({ type: "cjk-punct", detail: "contains CJK punctuation" });
   }
-  for (const calque of CALQUES) {
-    if (value.includes(calque)) {
-      issues.push({ type: "calque", detail: calque });
-    }
+
+  issues.push(...checkCalques(value));
+  issues.push(...checkGlued(value));
+  issues.push(...checkPlaceholders(value));
+  if (typeof key === "string") {
+    issues.push(...checkPlaceholderParity(key, value));
   }
-  for (const word of extractAsciiWords(value)) {
+
+  for (const { word } of extractAsciiWords(value)) {
     const lower = word.toLowerCase();
+    const upper = word.toUpperCase();
+    // Acronyms first: exact uppercase OK; wrong case is acronym-case (not blacklist).
+    if (ACRONYMS.has(upper)) {
+      if (word === upper) continue;
+      // Vietnamese question word "Ai" (who) — not the AI acronym.
+      if (upper === "AI" && word === "Ai") continue;
+      issues.push({ type: "acronym-case", detail: word });
+      continue;
+    }
     if (BLACKLIST_SET.has(lower)) {
       issues.push({ type: "blacklist", detail: word });
       continue;
     }
-    if (isAllCapsShort(word)) continue;
-    if (ALLOWLIST_SET.has(lower)) continue;
+    if (isAllowedTerm(word)) continue;
     if (VI_ASCII_SET.has(lower)) continue;
     if (word.length === 1) continue;
     issues.push({ type: "english", detail: word });
@@ -381,9 +1714,39 @@ function checkValue(_key, value) {
   return issues;
 }
 
-function main() {
+export function formatHit(key, value, issue) {
+  return `${key} => ${value}  [${issue.type}]`;
+}
+
+function loadDict(relPath, globalName) {
+  const code = readFileSync(join(REPO, relPath), "utf8");
+  const ctx = createContext({ window: {} });
+  runInContext(code, ctx, { filename: relPath });
+  const dict = ctx.window[globalName];
+  if (!dict || typeof dict !== "object") {
+    throw new Error(`Failed to load ${globalName} from ${relPath}`);
+  }
+  return dict;
+}
+
+function checkEnNoHan(en) {
+  const errors = [];
+  for (const [key, value] of Object.entries(en)) {
+    if (typeof value === "string" && HAN.test(value)) {
+      errors.push({
+        key,
+        value,
+        type: "han",
+        detail: "en value contains Han characters",
+      });
+    }
+  }
+  return errors;
+}
+
+export function runCheck() {
   const vi = loadDict("web/i18n-vi.js", "LF_I18N_VI");
-  loadDict("web/i18n-en.js", "LF_I18N_EN");
+  const en = loadDict("web/i18n-en.js", "LF_I18N_EN");
 
   const errors = [];
   for (const [key, value] of Object.entries(vi)) {
@@ -391,6 +1754,12 @@ function main() {
       errors.push({ key, value, ...issue });
     }
   }
+  errors.push(...checkEnNoHan(en));
+  return errors;
+}
+
+function main() {
+  const errors = runCheck();
 
   if (errors.length === 0) {
     console.log("0 mixed entries");
@@ -398,37 +1767,16 @@ function main() {
   }
 
   console.error(`${errors.length} mixed entries`);
-  const byType = {};
   for (const e of errors) {
-    byType[e.type] = (byType[e.type] || 0) + 1;
-  }
-  console.error("by type:", JSON.stringify(byType));
-
-  const words = {};
-  for (const e of errors) {
-    if (e.type === "english" || e.type === "blacklist") {
-      words[e.detail] = (words[e.detail] || 0) + 1;
-    }
-  }
-  console.error(
-    "top words:",
-    Object.entries(words)
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 50)
-      .map(([w, n]) => `${w}:${n}`)
-      .join(", "),
-  );
-
-  const limit = Number(process.env.LF_I18N_SHOW || 80);
-  for (const e of errors.slice(0, limit)) {
-    console.error(
-      `- [${e.type}] ${e.detail}\n  key: ${JSON.stringify(e.key)}\n  val: ${JSON.stringify(e.value)}`,
-    );
-  }
-  if (errors.length > limit) {
-    console.error(`… and ${errors.length - limit} more`);
+    console.error(formatHit(e.key, e.value, e));
   }
   process.exit(1);
 }
 
-main();
+const isMain =
+  process.argv[1] &&
+  resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+
+if (isMain) {
+  main();
+}
