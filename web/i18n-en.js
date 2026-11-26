@@ -529,3 +529,4 @@ Object.assign(window.LF_I18N_EN, {
   "AI 根据任务和命名要求生成完整的分支名。": "AI uses the task and naming instructions to generate the full branch name.",
   "请输入自定义前缀，或选择无前缀": "Enter a custom prefix or choose No prefix",
 });
+Object.assign(window.LF_I18N_EN,{"确认 Bot 操作 · LoopForge":"Confirm Bot action · LoopForge","工蜂授权已完成 · LoopForge":"Gongfeng authorization complete · LoopForge","关联聊天账号 · LoopForge":"Link chat account · LoopForge","网页预览":"Page preview","LoopForge · 登录":"LoopForge · Sign in","LoopForge 工作台":"LoopForge Workspace","LoopForge · Agent 编排平台":"LoopForge · Agent orchestration"});
