@@ -199,8 +199,8 @@ func (h *botIdentityHandlers) message(bot domain.NotificationBot, item domain.Bo
 		return true, "已解除当前" + channel + "账号与平台账号的绑定，旧确认码已失效。需要重新关联时，请发送“绑定账号”。", nil
 	}
 
-	if strings.HasPrefix(text, "/bind ") {
-		binding, err := h.repo.ConfirmBotUserBinding(bot, item.SenderID, strings.TrimSpace(strings.TrimPrefix(text, "/bind ")), time.Now().UTC())
+	if code, ok := botIdentityBindCode(text); ok {
+		binding, err := h.repo.ConfirmBotUserBinding(bot, item.SenderID, code, time.Now().UTC())
 		if err != nil {
 			return true, err.Error(), nil
 		}
@@ -210,7 +210,7 @@ func (h *botIdentityHandlers) message(bot domain.NotificationBot, item domain.Bo
 		}
 		return true, "已绑定平台账号「" + user.LoginName + "」。后续操作将使用你的身份、个人凭据和项目权限。请重新发送刚才的请求。", nil
 	}
-	explicit := text == "绑定账号" || text == "/bind"
+	explicit := text == "绑定账号" || text == "/bind" || text == "/link"
 	if explicit {
 		if binding, err := h.repo.BotUserBinding(scope, item.SenderID); err == nil {
 			if user, ok := h.repo.User(binding.UserID); ok {
@@ -239,11 +239,25 @@ func (h *botIdentityHandlers) message(bot domain.NotificationBot, item domain.Bo
 		return true, "", err
 	}
 	link := address + "/bot-bind.html#request=" + url.QueryEscape(token)
+	confirmHint := "将页面上的 /bind 确认码发回当前 Bot"
+	if bot.ChannelKind() == domain.BotChannelDiscord {
+		confirmHint = "将页面上的确认码用 /link 或 /bind 发回当前 Bot"
+	}
 	if bot.ChannelKind() != domain.BotChannelWeCom {
-		// Feishu and DingTalk replies are plain text: Markdown link syntax
-		// is shown verbatim and auto-linking swallows the closing bracket,
-		// so the URL stands alone on its own line.
-		return true, "请先关联你的平台账号（链接 15 分钟内有效）：\n" + link + "\n登录确认后，将页面上的 /bind 确认码发回当前 Bot。其他人点击链接不会直接完成绑定。", nil
+		// Feishu, DingTalk and Discord replies are plain text: Markdown link
+		// syntax is shown verbatim and auto-linking swallows the closing
+		// bracket, so the URL stands alone on its own line.
+		return true, "请先关联你的平台账号（链接 15 分钟内有效）：\n" + link + "\n登录确认后，" + confirmHint + "。其他人点击链接不会直接完成绑定。", nil
 	}
 	return true, "请先[关联你的平台账号](" + link + ")（15 分钟内有效）。登录确认后，将页面上的 /bind 确认码发回当前 Bot。其他人点击链接不会直接完成绑定。", nil
+}
+
+// botIdentityBindCode reports a /bind CODE or /link CODE confirmation.
+func botIdentityBindCode(text string) (code string, ok bool) {
+	for _, prefix := range []string{"/bind ", "/link "} {
+		if strings.HasPrefix(text, prefix) {
+			return strings.TrimSpace(strings.TrimPrefix(text, prefix)), true
+		}
+	}
+	return "", false
 }

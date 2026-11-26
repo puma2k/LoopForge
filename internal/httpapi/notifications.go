@@ -135,11 +135,19 @@ func (h *notificationHandlers) save(c *gin.Context, old *domain.NotificationBot)
 		TargetID           *string `json:"targetId"`
 		WriteApproval      *string `json:"writeApproval"`
 		ConfigVersion      *int64  `json:"configVersion"`
-		// TenantKey is the DingTalk CorpId entered by the administrator.
+		// TenantKey is the DingTalk CorpId or Discord Guild ID entered by the administrator.
 		TenantKey *string `json:"tenantKey"`
 		// CardTemplateID is the DingTalk interactive card template for
 		// action cards; empty sends plain-text notifications.
 		CardTemplateID *string `json:"cardTemplateId"`
+		// Discord: optional Interactions public key (hex).
+		PublicKey *string `json:"publicKey"`
+		// Discord: optional channel allowlist.
+		AllowedChannelIDs *[]string `json:"allowedChannelIds"`
+		// Discord: default SOP for /task.
+		DefaultWorkflowID *string `json:"defaultWorkflowId"`
+		// Discord: per-channel SOP mapping (channelId → workflowId).
+		ChannelWorkflowIDs map[string]string `json:"channelWorkflowIds"`
 		// PendingTargetAction decides what happens to queued Feishu/DingTalk
 		// notifications of the previous target: "cancel" or "migrate".
 		PendingTargetAction string `json:"pendingTargetAction"`
@@ -195,7 +203,9 @@ func (h *notificationHandlers) save(c *gin.Context, old *domain.NotificationBot)
 			// Web confirmation works on every channel: drafts run only
 			// after the bound user confirms them on the platform page.
 			bot.WriteApproval = mode
-		case mode == domain.BotWriteAuto && channel == domain.BotChannelWeCom:
+		case mode == domain.BotWriteAuto && (channel == domain.BotChannelWeCom || channel == domain.BotChannelDiscord):
+			// WeCom historically auto-executed; Discord /task needs auto
+			// (or confirm) to create requirements — readonly rejects /task.
 			bot.WriteApproval = mode
 		default:
 			c.JSON(400, gin.H{"error": "该渠道只支持只读查询或网页确认"})
@@ -233,6 +243,19 @@ func (h *notificationHandlers) save(c *gin.Context, old *domain.NotificationBot)
 				return
 			}
 			bot.CardTemplateID = tpl
+		}
+	}
+	if channel == domain.BotChannelDiscord {
+		if errMsg, code := applyDiscordBotSave(&bot, old, req.TenantKey, req.PublicKey, req.AllowedChannelIDs, req.DefaultWorkflowID, req.ChannelWorkflowIDs); errMsg != "" {
+			body := gin.H{"error": errMsg}
+			if code != "" {
+				body["code"] = code
+			}
+			c.JSON(400, body)
+			return
+		}
+		if user, ok := h.requestUser(c.Request, true); ok && user != nil && req.TenantKey != nil && strings.TrimSpace(*req.TenantKey) != "" {
+			bot.TenantExpectedBy = user.ID
 		}
 	}
 	if req.Model != nil {
@@ -288,6 +311,9 @@ func (h *notificationHandlers) save(c *gin.Context, old *domain.NotificationBot)
 			if verified.TenantName != "" {
 				bot.TenantName = verified.TenantName
 			}
+		}
+		if channel == domain.BotChannelDiscord {
+			bot.SecretHint = botinteraction.MaskDiscordToken(req.Secret)
 		}
 	}
 	// A target is accepted only after refreshing the real provider list. Never trust a posted name/type.
@@ -386,7 +412,94 @@ func (h *notificationHandlers) save(c *gin.Context, old *domain.NotificationBot)
 
 // botChannelOpen reports the channels configurable in this release.
 func botChannelOpen(channel string) bool {
-	return channel == domain.BotChannelWeCom || channel == domain.BotChannelFeishu || channel == domain.BotChannelDingTalk
+	return channel == domain.BotChannelWeCom || channel == domain.BotChannelFeishu || channel == domain.BotChannelDingTalk || channel == domain.BotChannelDiscord
+}
+
+// applyDiscordBotSave validates Discord-specific fields and writes them onto bot.
+// TenantExpected is set from TenantKey (Guild ID), matching DingTalk's CorpId flow.
+func applyDiscordBotSave(bot *domain.NotificationBot, old *domain.NotificationBot, tenantKey, publicKey *string, allowedChannels *[]string, defaultWorkflowID *string, channelWorkflowIDs map[string]string) (errMsg, code string) {
+	guild := ""
+	if tenantKey != nil {
+		guild = strings.TrimSpace(*tenantKey)
+	}
+	switch {
+	case guild == "" && old == nil:
+		return "请填写 Discord 服务器 Guild ID", "tenant_required"
+	case len(guild) > 191 || strings.ContainsAny(guild, " \t\r\n"):
+		return "Discord 服务器 Guild ID 格式无效", ""
+	case guild != "" && old != nil && old.TenantState == domain.BotTenantLocked && guild != old.TenantKey:
+		return "服务器已确认，更换服务器请新建配置", "immutable_field"
+	case guild != "":
+		bot.TenantExpected = guild
+	}
+	if publicKey != nil {
+		pk := strings.TrimSpace(*publicKey)
+		if len(pk) > 128 || (pk != "" && !discordPublicKeyHex(pk)) {
+			return "Discord Public Key 须为不超过 128 字符的十六进制", ""
+		}
+		bot.PublicKey = pk
+	}
+	if allowedChannels != nil {
+		seen := map[string]struct{}{}
+		out := make([]string, 0, len(*allowedChannels))
+		for _, raw := range *allowedChannels {
+			id := strings.TrimSpace(raw)
+			if id == "" {
+				continue
+			}
+			if len(id) > 32 || strings.ContainsAny(id, " \t\r\n") {
+				return "Discord 频道 ID 格式无效", ""
+			}
+			if _, ok := seen[id]; ok {
+				continue
+			}
+			seen[id] = struct{}{}
+			out = append(out, id)
+			if len(out) > 50 {
+				return "Discord 允许频道最多 50 个", ""
+			}
+		}
+		bot.AllowedChannelIDs = out
+	}
+	if defaultWorkflowID != nil {
+		wf := strings.TrimSpace(*defaultWorkflowID)
+		if len(wf) > 191 {
+			return "默认 SOP ID 过长", ""
+		}
+		bot.DefaultWorkflowID = wf
+	}
+	if channelWorkflowIDs != nil {
+		out := make(map[string]string, len(channelWorkflowIDs))
+		for ch, wf := range channelWorkflowIDs {
+			ch, wf = strings.TrimSpace(ch), strings.TrimSpace(wf)
+			if ch == "" || wf == "" {
+				continue
+			}
+			if len(ch) > 32 || len(wf) > 191 || strings.ContainsAny(ch, " \t\r\n") {
+				return "频道与 SOP 映射格式无效", ""
+			}
+			out[ch] = wf
+			if len(out) > 50 {
+				return "频道与 SOP 映射最多 50 条", ""
+			}
+		}
+		bot.ChannelWorkflowIDs = out
+	}
+	return "", ""
+}
+
+func discordPublicKeyHex(s string) bool {
+	if s == "" || len(s)%2 != 0 {
+		return false
+	}
+	for _, c := range s {
+		switch {
+		case c >= '0' && c <= '9', c >= 'a' && c <= 'f', c >= 'A' && c <= 'F':
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 func botSaveError(c *gin.Context, err error) {

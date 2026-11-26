@@ -13,6 +13,7 @@ const (
 	ChannelWeCom    = "wecom"
 	ChannelFeishu   = "feishu"
 	ChannelDingTalk = "dingtalk"
+	ChannelDiscord  = "discord"
 )
 
 // ErrChannelNotReady is returned for a channel kind without a registered or

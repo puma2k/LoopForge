@@ -1,6 +1,6 @@
 # 企业 IM 渠道配置与联调手册
 
-本手册对应 `docs/proposals/enterprise-im.md`，记录各渠道的配置步骤、所需权限、上线顺序和真实环境验证方法。当前可配置的渠道：**企业微信、飞书（单聊、群聊 @ Bot）、钉钉（单聊、群聊 @ Bot）**；三个渠道都支持 SOP 主动通知，写操作通过“网页确认”在平台确认后执行（企业微信另可选自动执行）。数据保留见第 9 节，升级与回退见第 2 节和第 10 节，最终测试记录见 [testing/im-final-test-record.md](testing/im-final-test-record.md)。
+本手册对应 `docs/proposals/enterprise-im.md`，记录各渠道的配置步骤、所需权限、上线顺序和真实环境验证方法。当前可配置的渠道：**企业微信、飞书（单聊、群聊 @ Bot）、钉钉（单聊、群聊 @ Bot）、Discord（Gateway WebSocket）**；前三个渠道都支持 SOP 主动通知，写操作通过“网页确认”在平台确认后执行（企业微信另可选自动执行）。Discord 的 `/task` 走同一套 SOP 派发语义，配置与联调见 [discord-bot.md](discord-bot.md)。数据保留见第 9 节，升级与回退见第 2 节和第 10 节，最终测试记录见 [testing/im-final-test-record.md](testing/im-final-test-record.md)。
 
 ## 1. 平台侧前置条件
 
@@ -158,6 +158,10 @@ AGENTFLOW_BOT_FAULT_TEST_MYSQL_DSN='user:pass@tcp(127.0.0.1:3306)/bot_fault_dt?p
 ### 4A.4 R2 真实环境验收清单（钉钉私聊闭环）
 
 逐项结果见 [R2 验收记录](testing/im-r2-acceptance.md)。
+
+## 4B. Discord（Gateway WebSocket）
+
+Discord 通过平台内置 Gateway 适配器接入（`gorilla/websocket`，不依赖 `discordgo`）。管理员在通道管理中填写 Application ID、Bot Token 与 Guild ID；首条匹配 Guild 的事件自动确认服务器（与钉钉 CorpId 预期锁定相同）。支持 `/link` 绑定账号、`/task` 创建需求并派发 SOP、自然语言 `/ask`。完整步骤、intent/scope、排障与设计说明见 [discord-bot.md](discord-bot.md)。
 
 ## 5. 记录页人工处理
 

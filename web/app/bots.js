@@ -6,11 +6,13 @@ const BOT_TABS=['list','edit','records'],BOT_STEPS=[[1,'填写凭据'],[2,'选�
 // Channels: WeCom keeps the three-step notification setup; Feishu replaces
 // target selection with enterprise confirmation followed by a bound member
 // who passed a trial proactive send.
-const BOT_CHANNELS={wecom:{name:'企业微信',app:'Bot ID',secret:'Secret',appHint:'企业微信智能机器人 Bot ID',ready:true},feishu:{name:'飞书',app:'App ID',secret:'App Secret',appHint:'飞书企业自建应用 App ID（cli_ 开头）',ready:true},dingtalk:{name:'钉钉',app:'Client ID',secret:'Client Secret',appHint:'钉钉企业内部应用 Client ID（AppKey）',ready:true}};
+const BOT_CHANNELS={wecom:{name:'企业微信',app:'Bot ID',secret:'Secret',appHint:'企业微信智能机器人 Bot ID',ready:true},feishu:{name:'飞书',app:'App ID',secret:'App Secret',appHint:'飞书企业自建应用 App ID（cli_ 开头）',ready:true},dingtalk:{name:'钉钉',app:'Client ID',secret:'Client Secret',appHint:'钉钉企业内部应用 Client ID（AppKey）',ready:true},discord:{name:'Discord',app:'Application ID',secret:'Bot Token',appHint:'Discord Developer Portal 中的 Application ID',ready:true,secretHint:true}};
 const BOT_TENANT={awaiting_confirmation:['企业待确认','warn'],locked:['企业已确认','success'],conflict:['企业冲突','error']};
+const BOT_DISCORD_TENANT={awaiting_confirmation:['服务器待确认','warn'],locked:['服务器已确认','success'],conflict:['服务器冲突','error']};
+const BOT_DISCORD_STEPS=[[1,'填写凭据'],[2,'服务器确认'],[3,'通知接收人（可选）']];
 function botChannel(bot){return BOT_CHANNELS[bot?.channel]?bot.channel:'wecom'}
 function botChannelInfo(bot){return BOT_CHANNELS[botChannel(bot)]}
-function botSteps(bot){return botChannel(bot)==='wecom'?BOT_STEPS:BOT_TENANT_STEPS}
+function botSteps(bot){const ch=botChannel(bot);return ch==='wecom'?BOT_STEPS:ch==='discord'?BOT_DISCORD_STEPS:BOT_TENANT_STEPS}
 function botNewKey(){return (crypto.randomUUID?.()||String(Date.now())+Math.random().toString(16).slice(2)).replace(/-/g,'').slice(0,32)}
 // In-progress states breathe; terminal states stay still.
 const BOT_LIVE_STATES=['pending','sending','connecting','reconnecting','queued','running','ready'];
@@ -28,9 +30,10 @@ function canManageBot(bot){
  return Number(bot?.ownerId)===user||Number(project?.ownerId)===user||(project?.members||[]).some(m=>Number(m.userId)===user&&m.role==='maintainer');
 }
 function botStepAllowed(bot,step){if(botChannel(bot)!=='wecom')return step===1||(step===2&&!!bot?.id)||(step===3&&!!bot?.id&&bot?.tenantState==='locked');return step===1||(step===2&&!!bot?.id)||(step===3&&!!bot?.id&&!!bot?.target&&!bot._targetChanged)}
-function botStepDone(bot,step){if(botChannel(bot)!=='wecom')return step===1?!!bot?.id:step===2?bot?.tenantState==='locked':step===3&&!!bot?.target?.verifiedAt&&!bot._targetChanged;return step===1?!!bot?.id:step===2?botStepAllowed(bot,3):false}
+function botStepDone(bot,step){if(botChannel(bot)==='discord')return step===1?!!bot?.id:step===2?bot?.tenantState==='locked':step===3&&bot?.tenantState==='locked';if(botChannel(bot)!=='wecom')return step===1?!!bot?.id:step===2?bot?.tenantState==='locked':step===3&&!!bot?.target?.verifiedAt&&!bot._targetChanged;return step===1?!!bot?.id:step===2?botStepAllowed(bot,3):false}
 function botStoredBot(bot){return bot?.id?botUI.items.find(b=>b.id===bot.id):null}
-function botCredentialsDirty(bot){const stored=botStoredBot(bot);if(!stored)return !!bot;const modelID=value=>(value||'').replace(/^codebuddy:/,'');return !!bot._secret||(bot.name||'')!==(stored.name||'')||(bot.botId||'')!==(stored.botId||'')||modelID(bot.model)!==modelID(stored.model)||!!bot.enabled!==!!stored.enabled||!!bot.interactionEnabled!==!!stored.interactionEnabled||botWriteApproval(bot)!==botWriteApproval(stored)||(bot._tenantKey!==undefined&&bot._tenantKey.trim()!==(stored.tenantExpected||''))||(bot._cardTemplateId!==undefined&&bot._cardTemplateId.trim()!==(stored.cardTemplateId||''))}
+function botCredentialsDirty(bot){const stored=botStoredBot(bot);if(!stored)return !!bot;const modelID=value=>(value||'').replace(/^codebuddy:/,'');const sameList=(a,b)=>String(a||'').trim()===String(b||'').trim();return !!bot._secret||(bot.name||'')!==(stored.name||'')||(bot.botId||'')!==(stored.botId||'')||modelID(bot.model)!==modelID(stored.model)||!!bot.enabled!==!!stored.enabled||!!bot.interactionEnabled!==!!stored.interactionEnabled||botWriteApproval(bot)!==botWriteApproval(stored)||(bot._tenantKey!==undefined&&bot._tenantKey.trim()!==(stored.tenantExpected||''))||(bot._cardTemplateId!==undefined&&bot._cardTemplateId.trim()!==(stored.cardTemplateId||''))||(bot._publicKey!==undefined&&bot._publicKey.trim()!==(stored.publicKey||''))||(bot._allowedChannelIds!==undefined&&!sameList(bot._allowedChannelIds,(stored.allowedChannelIds||[]).join(',')))||(bot._defaultWorkflowId!==undefined&&bot._defaultWorkflowId.trim()!==(stored.defaultWorkflowId||''))}
+function botTenantBadge(state,channel){const map=channel==='discord'?BOT_DISCORD_TENANT:BOT_TENANT;const [label,tone]=map[state]||map.awaiting_confirmation;return botBadge(label,tone,false,state)}
 // Legacy WeCom records without the field keep automatic execution.
 function botWriteApproval(bot){return bot?.writeApproval||(botChannel(bot)==='wecom'&&bot?.id?'auto':'readonly')}
 
@@ -46,7 +49,6 @@ function botStatusTone(status){return ({sent:'success',failed:'error',target_una
 function botStatusBadge(status){return botBadge(botStatusLabel(status),botStatusTone(status),BOT_LIVE_STATES.includes(status),status)}
 function botHealthBadge(health){return botBadge(botHealthLabel(health),({ready:'success',error:'error',awaiting_authorization:'warn'})[health]||'neutral',false,health||'unchecked')}
 function botEnabledBadge(enabled){return botBadge(enabled?'已启用':'已停用',enabled?'success':'neutral',false)}
-function botTenantBadge(state){const [label,tone]=BOT_TENANT[state]||BOT_TENANT.awaiting_confirmation;return botBadge(label,tone,false,state)}
 function botConnectionBadge(connection){const [label,tone]=BOT_CONNECTION[connection]||[connection,'neutral'];return botBadge('对话连接 · '+label,tone,BOT_LIVE_STATES.includes(connection),connection)}
 function botMessageBadge(status){const [label,tone]=BOT_MESSAGE[status]||[status,'neutral'];return botBadge(label,tone,BOT_LIVE_STATES.includes(status),status)}
 function botBusyLabel(action,icon,label,busyLabel){return botUI.busy&&botUI.busyAction===action?`<span class="bot-icon bot-spin" data-bot-icon="spinner" aria-hidden="true"></span>${busyLabel}`:`${icon?botIcon(icon):''}${label}`}
@@ -69,7 +71,7 @@ function botPanelHeadHTML(){
 function botTargetHTML(target){return target?`<span class="bot-target"><span class="bot-chip">${botTypeLabel(target.type)}</span><span class="bot-target-name">${escapeHTML(target.name)}</span></span>`:'<span class="bot-target is-empty">尚未选择接收会话</span>'}
 function botRowHTML(bot){
  const id=escapeHTML(bot.id),name=escapeHTML(bot.name),manage=canManageBot(bot),wecom=botChannel(bot)==='wecom';
- const target=wecom||bot.target?botTargetHTML(bot.target):`<span class="bot-target">${botTenantBadge(bot.tenantState)}</span>`;
+ const target=wecom||bot.target?botTargetHTML(bot.target):`<span class="bot-target">${botTenantBadge(bot.tenantState,botChannel(bot))}</span>`;
  const model=globalThis.AgentFlowAssistantModels?.concreteModelId(bot.model)??bot.model;
  const sub=[wecom?'':escapeHTML(botChannelInfo(bot).name),escapeHTML(model||''),bot.interactionEnabled?({readonly:'已启用对话（只读）',confirm:'已启用对话（网页确认）'}[botWriteApproval(bot)]||'已启用对话'):''].filter(Boolean).join(' · ');
  return `<tr data-bot-row="${id}"><td><div class="bot-row-main"><span class="bot-glyph">${botIcon('robot')}</span><span class="bot-row-text"><b class="bot-row-name">${name}</b><small class="bot-row-sub">${sub}</small><small class="bot-row-target">${target}</small></span></div></td><td class="bot-col-target">${target}</td><td>${botEnabledBadge(bot.enabled)}</td><td class="bot-col-sub">${botHealthBadge(bot.health)}</td><td class="bot-col-actions"><div class="bot-row-actions"><button type="button" class="hui-icon-btn" data-bot-edit="${id}" aria-label="编辑 ${name}" title="编辑">${botIcon('edit')}</button>${manage?`<button type="button" class="hui-icon-btn is-danger" data-bot-delete="${id}" aria-label="删除 ${name}" title="删除">${botIcon('trash')}</button>`:''}</div></td></tr>`;
@@ -106,7 +108,9 @@ function botWriteFieldHTML(bot){
 }
 function botCredentialPaneHTML(bot,manage){
  const c=botChannelInfo(bot),plaintext=bot.credentialFormat==='plaintext';
- return `<form id="botForm" novalidate><fieldset ${!manage||botUI.busy?'disabled':''}><div class="bot-fields"><label>名称<input class="input" name="name" required maxlength="80" value="${escapeHTML(bot.name)}" placeholder="例如：研发进展通知"></label>${botChannelFieldHTML(bot)}<label>${escapeHTML(c.app)}<input class="input" name="botId" required maxlength="191" value="${escapeHTML(bot.botId)}" autocomplete="off" placeholder="${escapeHTML(c.appHint)}" ${bot.id&&botChannel(bot)!=='wecom'?'readonly':''}></label><label>${escapeHTML(c.secret)}<input class="input" name="secret" type="password" value="${escapeHTML(bot._secret||'')}" maxlength="512" ${bot.id?'':'required'} autocomplete="new-password" placeholder="${bot.secretConfigured?'已配置 · 留空保留，填写则替换':'填写'+escapeHTML(c.secret)}">${plaintext?'<small class="bot-record-error">Secret 仍为旧格式存储，等待管理员执行加密迁移。</small>':''}</label>${botCorpFieldHTML(bot)}<div class="bot-model-field"><span>执行器与模型</span>${botModelPickerHTML()}<small class="muted">Bot 回答对话和生成完成汇报时使用；对话使用发送者绑定的平台账号凭据，SOP 汇报使用本次执行者凭据。</small></div>${botWriteFieldHTML(bot)}<label class="bot-check"><input name="enabled" type="checkbox" role="switch" ${bot.enabled?'checked':''}>启用此 Bot</label><label class="bot-check"><input name="interactionEnabled" type="checkbox" role="switch" ${bot.interactionEnabled?'checked':''}>启用对话</label></div><p class="muted bot-hint">${botChannel(bot)==='wecom'?'首次对话请按 Bot 提示关联平台账号；新单聊和群聊会自动建立上下文。发送 /new 或“开启新会话”开始新的对话。':botChannel(bot)==='dingtalk'?'处理单聊和群聊中 @ Bot 的文字消息。保存时会校验凭据；首条消息的企业与 CorpId 一致时自动确认企业。':'处理单聊和群聊中 @ Bot 的文字消息。保存时会校验凭据；首次收到消息后，需在第②步确认所属企业。'}</p><div class="bot-save-row"><button type="submit" class="button primary">${botBusyLabel('save','','保存并下一步','保存中…')}</button></div></fieldset></form>`;
+ const hint=botChannel(bot)==='wecom'?'首次对话请按 Bot 提示关联平台账号；新单聊和群聊会自动建立上下文。发送 /new 或“开启新会话”开始新的对话。':botChannel(bot)==='dingtalk'?'处理单聊和群聊中 @ Bot 的文字消息。保存时会校验凭据；首条消息的企业与 CorpId 一致时自动确认企业。':botChannel(bot)==='discord'?'处理服务器频道中的消息与斜杠命令。保存时会校验 Bot Token；首条来自填写 Guild ID 的事件会自动确认服务器。支持 /link、/task、/ask。':'处理单聊和群聊中 @ Bot 的文字消息。保存时会校验凭据；首次收到消息后，需在第②步确认所属企业。';
+ const secretPlaceholder=bot.secretConfigured?(bot.secretHint?`已配置 ${escapeHTML(bot.secretHint)} · 留空保留，填写则替换`:'已配置 · 留空保留，填写则替换'):'填写'+escapeHTML(c.secret);
+ return `<form id="botForm" novalidate><fieldset ${!manage||botUI.busy?'disabled':''}><div class="bot-fields"><label>名称<input class="input" name="name" required maxlength="80" value="${escapeHTML(bot.name)}" placeholder="例如：研发进展通知"></label>${botChannelFieldHTML(bot)}<label>${escapeHTML(c.app)}<input class="input" name="botId" required maxlength="191" value="${escapeHTML(bot.botId)}" autocomplete="off" placeholder="${escapeHTML(c.appHint)}" ${bot.id&&botChannel(bot)!=='wecom'?'readonly':''}></label><label>${escapeHTML(c.secret)}<input class="input" name="secret" type="password" value="${escapeHTML(bot._secret||'')}" maxlength="512" ${bot.id?'':'required'} autocomplete="new-password" placeholder="${secretPlaceholder}">${plaintext?'<small class="bot-record-error">Secret 仍为旧格式存储，等待管理员执行加密迁移。</small>':''}</label>${botCorpFieldHTML(bot)}${botDiscordExtraFieldsHTML(bot)}<div class="bot-model-field"><span>执行器与模型</span>${botModelPickerHTML()}<small class="muted">Bot 回答对话和生成完成汇报时使用；对话使用发送者绑定的平台账号凭据，SOP 汇报使用本次执行者凭据。</small></div>${botWriteFieldHTML(bot)}<label class="bot-check"><input name="enabled" type="checkbox" role="switch" ${bot.enabled?'checked':''}>启用此 Bot</label><label class="bot-check"><input name="interactionEnabled" type="checkbox" role="switch" ${bot.interactionEnabled?'checked':''}>启用对话</label></div><p class="muted bot-hint">${hint}</p><div class="bot-save-row"><button type="submit" class="button primary">${botBusyLabel('save','','保存并下一步','保存中…')}</button></div></fieldset></form>`;
 }
 // DingTalk: the administrator enters the expected CorpId; it can be
 // corrected until the first matching message locks it.
@@ -115,10 +119,20 @@ function botCorpFieldHTML(bot){
  const locked=bot.tenantState==='locked',value=bot._tenantKey??bot.tenantExpected??'';
  return `<label>企业 CorpId<input class="input" name="tenantKey" ${bot.id?'':'required'} maxlength="191" autocomplete="off" value="${escapeHTML(value)}" placeholder="钉钉管理后台“企业信息”中的 CorpId（ding 开头）" ${locked?'readonly':''}><small class="muted">${locked?'企业已确认，更换企业请新建配置。':'首条单聊消息的企业与此一致时自动确认；不一致时停止处理并提示冲突。'}</small></label><label>互动卡片模板 ID（可选）<input class="input" name="cardTemplateId" maxlength="128" autocomplete="off" value="${escapeHTML(bot._cardTemplateId??bot.cardTemplateId??'')}" placeholder="开发者后台 → 卡片平台中已发布的模板 ID"><small class="muted">填写后，待处理和失败的通知以带按钮的卡片发送，可直接通过、重试或退回；留空则发送文字通知。模板变量见使用手册。</small></label>`;
 }
+// Discord: Guild ID required; optional public key, channel allowlist, default SOP.
+function botDiscordExtraFieldsHTML(bot){
+ if(botChannel(bot)!=='discord')return '';
+ const locked=bot.tenantState==='locked',guild=bot._tenantKey??bot.tenantExpected??'';
+ const channels=bot._allowedChannelIds??(bot.allowedChannelIds||[]).join(', ');
+ const wf=bot._defaultWorkflowId??bot.defaultWorkflowId??'';
+ const pk=bot._publicKey??bot.publicKey??'';
+ return `<label>服务器 Guild ID<input class="input" name="tenantKey" ${bot.id?'':'required'} maxlength="191" autocomplete="off" value="${escapeHTML(guild)}" placeholder="Discord 服务器 ID（开发者模式右键复制）" ${locked?'readonly':''}><small class="muted">${locked?'服务器已确认，更换服务器请新建配置。':'首条来自此 Guild 的事件会自动确认；不一致时停止处理并提示冲突。'}</small></label><label>Public Key（可选）<input class="input" name="publicKey" maxlength="128" autocomplete="off" value="${escapeHTML(pk)}" placeholder="Interactions 用的 Application Public Key（十六进制）"></label><label>允许的频道 ID（可选）<input class="input" name="allowedChannelIds" maxlength="800" autocomplete="off" value="${escapeHTML(channels)}" placeholder="逗号分隔，留空表示服务器内全部频道"><small class="muted">仅这些频道处理斜杠命令与消息；最多 50 个。</small></label><label>默认 SOP / Workflow ID（可选）<input class="input" name="defaultWorkflowId" maxlength="191" autocomplete="off" value="${escapeHTML(wf)}" placeholder="Discord /task 未映射频道时使用的 SOP"><small class="muted">未填则回退到项目默认 SOP。</small></label>`;
+}
 // Enterprise confirmation: the candidate comes from the first trusted event
 // of the authenticated connection; the platform query is shown alongside.
 function botTenantPaneHTML(bot,manage){
  if(botChannel(bot)==='dingtalk')return botDingTalkTenantPaneHTML(bot,manage);
+ if(botChannel(bot)==='discord')return botDiscordTenantPaneHTML(bot,manage);
  const info=botUI.tenant?.botId===bot.id?botUI.tenant:null,candidate=bot.tenantCandidate,state=bot.tenantState||'awaiting_confirmation';
  const queried=info?.queried?`${escapeHTML(info.queried.tenantName||'未返回名称')} · ${escapeHTML(info.queried.tenantKey||'未返回企业标识')}`:info?.queryError?`<span class="bot-record-error">${escapeHTML(info.queryError)}</span>`:'<span class="muted">读取中…</span>';
  const match=candidate&&info?.queried?.tenantKey?(candidate.tenantKey===info.queried.tenantKey?'<span class="bot-chip">与平台查询一致</span>':'<span class="bot-record-error">与平台查询不一致，请核实</span>'):'';
@@ -136,6 +150,14 @@ function botDingTalkTenantPaneHTML(bot,manage){
  else if(state==='conflict')body=`<p class="bot-record-error">收到的消息来自企业 <code>${escapeHTML(candidate?.conflict||'')}</code>，与填写的 CorpId <code>${escapeHTML(bot.tenantExpected||'')}</code> 不一致，已停止处理。</p><p class="muted bot-hint">核实后在第①步改正 CorpId 并保存，或点“重新发现”重新检查下一条消息。</p><div class="bot-save-row"><button type="button" class="button ghost" id="botTenantRediscover" ${manage&&!botUI.busy?'':'disabled'}>${botBusyLabel('tenant','refresh','重新发现','处理中…')}</button></div>`;
  else body=`<p>等待第一条消息。请让测试成员在钉钉中给机器人发一条单聊消息；企业与 <code>${escapeHTML(bot.tenantExpected||'')}</code> 一致时自动确认，这条消息也会正常处理。</p>`;
  return `<div class="bot-summary"><span class="muted">状态</span><span>${botTenantBadge(state)}</span><span class="muted">填写的 CorpId</span><span><code>${escapeHTML(bot.tenantExpected||'')}</code></span></div>${body}<div class="bot-save-row"><button type="button" class="hui-icon-btn" id="botTenantRefresh" title="刷新" aria-label="刷新企业信息">${botIcon('refresh')}</button><button type="button" class="button ghost" data-bot-back ${botUI.busy?'disabled':''}>返回列表</button></div>`;
+}
+function botDiscordTenantPaneHTML(bot,manage){
+ const state=bot.tenantState||'awaiting_confirmation',candidate=bot.tenantCandidate;
+ let body;
+ if(state==='locked')body=`<p>已确认服务器 <code>${escapeHTML(bot.tenantKey||'')}</code>，只接收该服务器的消息。</p><p class="muted bot-hint">更换应用或服务器请新建配置。通知接收人可选，Discord /task 不依赖此项。</p><div class="bot-save-row"><button type="button" class="button primary" data-bot-step="3" ${botUI.busy?'disabled':''}>下一步（可选）：通知接收人</button><button type="button" class="button ghost" data-bot-back ${botUI.busy?'disabled':''}>完成，返回列表</button></div>`;
+ else if(state==='conflict')body=`<p class="bot-record-error">收到的事件来自服务器 <code>${escapeHTML(candidate?.conflict||'')}</code>，与填写的 Guild ID <code>${escapeHTML(bot.tenantExpected||'')}</code> 不一致，已停止处理。</p><p class="muted bot-hint">核实后在第①步改正 Guild ID 并保存，或点“重新发现”重新检查下一条事件。</p><div class="bot-save-row"><button type="button" class="button ghost" id="botTenantRediscover" ${manage&&!botUI.busy?'':'disabled'}>${botBusyLabel('tenant','refresh','重新发现','处理中…')}</button></div>`;
+ else body=`<p>等待第一条事件。请让测试成员在 Discord 服务器中与机器人互动；Guild 与 <code>${escapeHTML(bot.tenantExpected||'')}</code> 一致时自动确认，这条消息也会正常处理。</p>`;
+ return `<div class="bot-summary"><span class="muted">状态</span><span>${botTenantBadge(state,'discord')}</span><span class="muted">填写的 Guild ID</span><span><code>${escapeHTML(bot.tenantExpected||'')}</code></span></div>${body}<div class="bot-save-row"><button type="button" class="hui-icon-btn" id="botTenantRefresh" title="刷新" aria-label="刷新服务器信息">${botIcon('refresh')}</button><button type="button" class="button ghost" data-bot-back ${botUI.busy?'disabled':''}>返回列表</button></div>`;
 }
 function botTargetPaneHTML(bot,manage){
  const changed=!!bot._targetChanged;
@@ -398,7 +420,7 @@ function bindBots(host){
  host.querySelectorAll('[data-interaction-push-resend]').forEach(el=>el.onclick=()=>botInteractionAction(el.dataset.interactionPushResend,'push-resend',el));
  host.querySelectorAll('[data-interaction-push-verify]').forEach(el=>el.onclick=()=>botVerifySender(el.dataset.interactionPushVerify,el));
 }
-function captureBotDraft(host){const form=host.querySelector('#botForm');if(!form||!botUI.selected)return;const bot=botUI.selected,channel=form.elements.channel?.value;if(channel&&channel!==botChannel(bot)){bot.channel=channel;bot.writeApproval='readonly';botUI.motion=null;queueMicrotask(renderBots)}bot.name=form.elements.name.value;bot.botId=form.elements.botId.value;bot.enabled=form.elements.enabled.checked;bot.model=form.elements.model?.value||bot.model||'';bot.interactionEnabled=form.elements.interactionEnabled.checked;bot._secret=form.elements.secret.value;if(form.elements.writeApproval)bot.writeApproval=form.elements.writeApproval.value;if(form.elements.tenantKey)bot._tenantKey=form.elements.tenantKey.value;if(form.elements.cardTemplateId)bot._cardTemplateId=form.elements.cardTemplateId.value}
+function captureBotDraft(host){const form=host.querySelector('#botForm');if(!form||!botUI.selected)return;const bot=botUI.selected,channel=form.elements.channel?.value;if(channel&&channel!==botChannel(bot)){bot.channel=channel;bot.writeApproval='readonly';botUI.motion=null;queueMicrotask(renderBots)}bot.name=form.elements.name.value;bot.botId=form.elements.botId.value;bot.enabled=form.elements.enabled.checked;bot.model=form.elements.model?.value||bot.model||'';bot.interactionEnabled=form.elements.interactionEnabled.checked;bot._secret=form.elements.secret.value;if(form.elements.writeApproval)bot.writeApproval=form.elements.writeApproval.value;if(form.elements.tenantKey)bot._tenantKey=form.elements.tenantKey.value;if(form.elements.cardTemplateId)bot._cardTemplateId=form.elements.cardTemplateId.value;if(form.elements.publicKey)bot._publicKey=form.elements.publicKey.value;if(form.elements.allowedChannelIds)bot._allowedChannelIds=form.elements.allowedChannelIds.value;if(form.elements.defaultWorkflowId)bot._defaultWorkflowId=form.elements.defaultWorkflowId.value}
 function botSaveSelected(saved){const index=botUI.items.findIndex(b=>b.id===saved.id);if(index<0)botUI.items.push(saved);else botUI.items[index]=saved;botUI.selected=structuredClone(saved);botUI.error='';nodeBotCache.delete(botUI.projectId)}
 function bindBotEditor(host){
  host.querySelector('#botDelete')?.addEventListener('click',()=>botDelete(botStoredBot(botUI.selected)||botUI.selected,null));
@@ -417,9 +439,9 @@ function bindBotEditor(host){
    if(!form.isConnected||botUI.busy)return;
    captureBotDraft(host);
    const bot=botUI.selected,projectId=botUI.projectId,revision=botUI.revision,creating=!bot.id;
-   const dingtalk=botChannel(bot)==='dingtalk';
-   const missing=['name','botId',...(creating?['secret']:[]),...(creating&&dingtalk?['tenantKey']:[])].map(name=>form.elements[name]).filter(input=>input&&!input.value.trim());
-   if(missing.length){botShake(missing);const c=botChannelInfo(bot);toast(creating?`请填写名称、${c.app}、${c.secret}${dingtalk?' 和企业 CorpId':''}`:`请填写名称和 ${c.app}`,'warn');return}
+   const dingtalk=botChannel(bot)==='dingtalk',discord=botChannel(bot)==='discord';
+   const missing=['name','botId',...(creating?['secret']:[]),...(creating&&(dingtalk||discord)?['tenantKey']:[])].map(name=>form.elements[name]).filter(input=>input&&!input.value.trim());
+   if(missing.length){botShake(missing);const c=botChannelInfo(bot);toast(creating?`请填写名称、${c.app}、${c.secret}${dingtalk?' 和企业 CorpId':discord?' 和服务器 Guild ID':''}`:`请填写名称和 ${c.app}`,'warn');return}
    if(bot.interactionEnabled&&!botStoredBot(bot)?.interactionEnabled&&!window.AgentFlowAssistantModels?.concreteModelId(bot.model)){
     form.querySelector('#botModelPicker [data-feature-model]')?.focus();
     toast('请先选择模型','warn');return;
@@ -428,6 +450,12 @@ function bindBotEditor(host){
    const payload={projectId,name:bot.name,channel:botChannel(bot),botId:bot.botId,enabled:bot.enabled,model:bot.model,interactionEnabled:bot.interactionEnabled,writeApproval:botWriteApproval(bot),secret:form.elements.secret.value};
    if(stored)payload.configVersion=stored.configVersion;
    if(dingtalk){payload.tenantKey=(form.elements.tenantKey?.value||'').trim();payload.cardTemplateId=(form.elements.cardTemplateId?.value||'').trim()}
+   if(discord){
+    payload.tenantKey=(form.elements.tenantKey?.value||'').trim();
+    payload.publicKey=(form.elements.publicKey?.value||'').trim();
+    payload.defaultWorkflowId=(form.elements.defaultWorkflowId?.value||'').trim();
+    payload.allowedChannelIds=[...(form.elements.allowedChannelIds?.value||'').split(',')].map(s=>s.trim()).filter(Boolean);
+   }
    if(bot.id&&!payload.secret&&bot.botId===botStoredBot(bot)?.botId&&bot._targetChanged)payload.targetId=bot.target?.id||'';
    if(bot._targetChanged&&(payload.secret||!bot.id)){toast('请先保存凭据，再刷新并选择目标','warn');return}
    botUI.busy=true;botUI.busyAction='save';renderBots();
