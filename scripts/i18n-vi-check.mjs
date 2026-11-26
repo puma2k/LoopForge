@@ -31,6 +31,15 @@ const CALQUES = [
   "tại đã chọn",
   "là đang chờ",
   "và làm không",
+  "đến tại",
+  "tại nhiều nhất",
+  "tại thời gian",
+  "Thêm đến ",
+  "Avg ",
+  "avg ",
+  "e.g.",
+  "backfill",
+  "bởi avg",
 ];
 
 /** Always report — even if mistakenly added to the allowlist. */
