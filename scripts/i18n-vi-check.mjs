@@ -1681,11 +1681,68 @@ function checkGlued(value) {
   return issues;
 }
 
+/** Split syllable: "tạon hánh", "mởp hiên", "cóp hiên", "kỳp hiên". */
+const SPLIT_PHIEN_NHANH_RE =
+  /(?<![\p{L}])\p{L}*\p{L}[np] (?:hánh|hiên)(?![\p{L}])/gu;
+
+/** Known glued stems from broken syllable joins (also /bảnmô/). */
+const GLUED_KNOWN_RE =
+  /bảnmô|(?<![\p{L}])(?:vụp|cóp|tạon|mởn|mởp|lạip|tảip|mớip|cón)(?![\p{L}])/gu;
+
+/**
+ * Calque 当前X → "hiện tại X" at ANY position.
+ * Correct order is "X hiện tại" and must pass.
+ */
+const HIEN_TAI_X_RE =
+  /(?:^|[^\p{L}])hiện tại (?:phiên|nhánh|dự án|yêu cầu|trang|lần chạy|bản|tác tử|bàn làm việc|SOP|repo|kho)(?![\p{L}])/giu;
+
+function checkSplitSyllables(value) {
+  const issues = [];
+  SPLIT_PHIEN_NHANH_RE.lastIndex = 0;
+  let m;
+  while ((m = SPLIT_PHIEN_NHANH_RE.exec(value)) !== null) {
+    issues.push({ type: "dính", detail: m[0].trim() });
+  }
+  GLUED_KNOWN_RE.lastIndex = 0;
+  while ((m = GLUED_KNOWN_RE.exec(value)) !== null) {
+    issues.push({ type: "dính", detail: m[0] });
+  }
+  return issues;
+}
+
+/**
+ * UI terminology: prefer "bàn làm việc"; ban "Không gian làm việc" and
+ * standalone workspace / Workspace (env vars and paths are masked first).
+ */
+function checkTerminology(value) {
+  const issues = [];
+  if (/Không gian làm việc/i.test(value)) {
+    issues.push({ type: "term", detail: "Không gian làm việc" });
+  }
+  const masked = maskIgnored(value);
+  const wsRe = /(?<![\w./$`])\b[Ww]orkspaces?\b(?![\w./])/g;
+  let m;
+  while ((m = wsRe.exec(masked)) !== null) {
+    issues.push({ type: "term", detail: m[0] });
+  }
+  return issues;
+}
+
 function checkCalques(value) {
   const issues = [];
   // Calque 当前X → "hiện tại …" at start (lowercase hiện)
   if (/^hiện tại /.test(value)) {
     issues.push({ type: "calque", detail: "hiện tại …" });
+  }
+  // Calque 当前X mid-string (specific nouns)
+  HIEN_TAI_X_RE.lastIndex = 0;
+  let hm;
+  while ((hm = HIEN_TAI_X_RE.exec(value)) !== null) {
+    const detail = hm[0].replace(/^[^\p{L}]+/u, "").trim();
+    // Avoid duplicate when already flagged by the prefix rule above
+    if (!issues.some((i) => i.type === "calque" && i.detail === detail)) {
+      issues.push({ type: "calque", detail: detail || "hiện tại …" });
+    }
   }
   // Calque 这/该/本 → "Này …" at start
   if (/^Này /.test(value)) {
@@ -1734,7 +1791,9 @@ export function checkValue(key, value) {
   }
 
   issues.push(...checkCalques(value));
+  issues.push(...checkSplitSyllables(value));
   issues.push(...checkGlued(value));
+  issues.push(...checkTerminology(value));
   issues.push(...checkPlaceholders(value));
   issues.push(...checkQuoteGlue(value));
   if (typeof key === "string") {

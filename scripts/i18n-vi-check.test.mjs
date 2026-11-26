@@ -101,6 +101,46 @@ describe("i18n-vi-check must-fail cases (review findings)", () => {
       `expected quote glue: ${JSON.stringify(issues)}`,
     );
   });
+
+  it("catches split syllables phiên/nhánh and bảnmô glue", () => {
+    const cases = [
+      "tạon hánh",
+      "mởp hiên ↗",
+      "chưa cóp hiên bảnmô tả",
+      "phiên bảnmô tả",
+      "không thể tạo tác vụ định kỳp hiên",
+    ];
+    for (const v of cases) {
+      const issues = checkValue("x", v);
+      assert.ok(
+        hasType(issues, "dính"),
+        `expected dính in ${JSON.stringify(v)}: ${JSON.stringify(issues)}`,
+      );
+    }
+  });
+
+  it("catches mid-string hiện tại X calque", () => {
+    const cases = [
+      ["打开当前会话 ↗", "mở hiện tại phiên ↗"],
+      ["搜索当前项目的需求…", "tìm kiếm hiện tại dự án yêu cầu…"],
+      ["无法确认当前分支：%w", "không thể xác nhận hiện tại nhánh: %w"],
+    ];
+    for (const [key, v] of cases) {
+      const issues = checkValue(key, v);
+      assert.ok(
+        hasType(issues, "calque"),
+        `expected calque in ${JSON.stringify(v)}: ${JSON.stringify(issues)}`,
+      );
+    }
+  });
+
+  it("catches Không gian làm việc terminology", () => {
+    const issues = checkValue("LoopForge 工作台", "LoopForge · Không gian làm việc");
+    assert.ok(
+      hasType(issues, "term"),
+      `expected term: ${JSON.stringify(issues)}`,
+    );
+  });
 });
 
 describe("i18n-vi-check must-pass cases", () => {
@@ -161,5 +201,30 @@ describe("i18n-vi-check must-pass cases", () => {
       "Yêu cầu “{{issue.title}}” đã hoàn tất",
     );
     assert.deepEqual(issues, [], `unexpected: ${JSON.stringify(issues)}`);
+  });
+
+  it("passes fixed phiên/nhánh and bàn làm việc strings", () => {
+    const good = [
+      ["创建分支", "Tạo nhánh"],
+      ["打开会话 ↗", "Mở phiên ↗"],
+      ["暂无版本说明", "Chưa có mô tả phiên bản"],
+      ["版本说明", "Mô tả phiên bản"],
+      ["打开当前会话 ↗", "Mở phiên hiện tại ↗"],
+      ["无法确认当前分支：%w", "Không thể xác nhận nhánh hiện tại: %w"],
+      ["当前版本", "Phiên bản hiện tại"],
+      ["当前没有进行中的需求", "Hiện không có yêu cầu đang chạy"],
+      ["LoopForge 工作台", "LoopForge · Bàn làm việc"],
+      ["%s：继续已有分支 %s，MR 目标主分支 %s", "Tiếp tục nhánh đã có %s"],
+    ];
+    for (const [key, value] of good) {
+      let k = key;
+      if (value === "Tiếp tục nhánh đã có %s") k = "%s";
+      const issues = checkValue(k, value);
+      assert.deepEqual(
+        issues,
+        [],
+        `unexpected issues for ${value}: ${JSON.stringify(issues)}`,
+      );
+    }
   });
 });
