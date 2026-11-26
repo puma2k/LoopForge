@@ -14,7 +14,7 @@ func TestHandleDiscordTaskCreatesIssueAndResolvesWorkflow(t *testing.T) {
 	bot := domain.NotificationBot{
 		ID: "b-discord", BotID: "app-discord", ProjectID: "p", OwnerID: 42, Channel: domain.BotChannelDiscord,
 		Enabled: true, InteractionEnabled: true, Model: domain.DefaultNotificationReportModel,
-		TenantExpected: "guild-1", DefaultWorkflowID: "wf-default",
+		WriteApproval: domain.BotWriteAuto, TenantExpected: "guild-1", DefaultWorkflowID: "wf-default",
 		ChannelWorkflowIDs: map[string]string{"ch-special": "wf-channel"},
 	}
 	if err := s.SaveNotificationBot(bot, "discord-bot-token-TEST"); err != nil {
@@ -67,13 +67,51 @@ func TestHandleDiscordTaskCreatesIssueAndResolvesWorkflow(t *testing.T) {
 
 func TestHandleDiscordTaskIgnoresNonTask(t *testing.T) {
 	_, h, _ := botFixture(t)
-	bot := domain.NotificationBot{Channel: domain.BotChannelDiscord}
+	bot := domain.NotificationBot{Channel: domain.BotChannelDiscord, WriteApproval: domain.BotWriteAuto}
 	user := domain.User{ID: 43, LoginName: "other-user"}
 	if reply, handled := h.handleDiscordTask(context.Background(), bot, domain.BotConversation{}, domain.BotInteraction{Content: "hello"}, user); handled || reply != "" {
 		t.Fatalf("non-task handled=%v reply=%q", handled, reply)
 	}
 	if reply, handled := h.handleDiscordTask(context.Background(), bot, domain.BotConversation{}, domain.BotInteraction{Content: "/task"}, user); !handled || !strings.Contains(reply, "用法") {
 		t.Fatalf("empty task = handled=%v reply=%q", handled, reply)
+	}
+}
+
+func TestHandleDiscordTaskRespectsWriteApproval(t *testing.T) {
+	s, h, _ := botFixture(t)
+	bot := domain.NotificationBot{
+		ID: "b-dc-ro", BotID: "app-ro", ProjectID: "p", OwnerID: 42, Channel: domain.BotChannelDiscord,
+		Enabled: true, InteractionEnabled: true, WriteApproval: domain.BotWriteReadOnly,
+		TenantExpected: "guild-1", DefaultWorkflowID: "wf-default",
+	}
+	if err := s.SaveNotificationBot(bot, "discord-bot-token-RO"); err != nil {
+		t.Fatal(err)
+	}
+	bot, _ = s.NotificationBot(bot.ID)
+	bindBotTestUser(t, s, bot, "discord-user-ro", 43)
+	user, _ := s.User(43)
+	conv := domain.BotConversation{ID: "c-ro", ChatID: "ch-1", ChatType: "group"}
+	reply, handled := h.handleDiscordTask(context.Background(), bot, conv, domain.BotInteraction{
+		SenderID: "discord-user-ro", Content: "/task 只读应拒绝",
+	}, user)
+	if !handled || !strings.Contains(reply, "只读") {
+		t.Fatalf("readonly = handled=%v reply=%q", handled, reply)
+	}
+	before := len(s.Issues())
+
+	bot.WriteApproval = domain.BotWriteConfirm
+	if err := s.SaveNotificationBot(bot, ""); err != nil {
+		t.Fatal(err)
+	}
+	bot, _ = s.NotificationBot(bot.ID)
+	reply, handled = h.handleDiscordTask(context.Background(), bot, conv, domain.BotInteraction{
+		SenderID: "discord-user-ro", Content: "/task 网页确认草稿", PlatformEventID: "ix-confirm",
+	}, user)
+	if !handled || (!strings.Contains(reply, "确认") && !strings.Contains(reply, "准备")) {
+		t.Fatalf("confirm = handled=%v reply=%q", handled, reply)
+	}
+	if len(s.Issues()) != before {
+		t.Fatalf("confirm mode must not create issue yet; issues=%d", len(s.Issues())-before)
 	}
 }
 

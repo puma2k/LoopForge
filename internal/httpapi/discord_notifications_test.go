@@ -66,8 +66,13 @@ func TestDiscordBotSaveRequiresGuildAndMasksSecret(t *testing.T) {
 		t.Fatalf("discord fields = %+v", stored)
 	}
 	auto := base()
+	auto["botId"] = "app-456"
 	auto["tenantKey"], auto["writeApproval"] = "guild-2", "auto"
-	if code, _ := create(auto); code != 400 {
-		t.Fatalf("auto write on Discord = %d", code)
+	code, out = create(auto)
+	if code != 200 {
+		t.Fatalf("auto write on Discord = %d %v", code, out)
+	}
+	if out["writeApproval"] != "auto" {
+		t.Fatalf("writeApproval = %v", out["writeApproval"])
 	}
 }

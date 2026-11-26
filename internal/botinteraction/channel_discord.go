@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -244,8 +245,10 @@ type discordConn struct {
 	stopOnce  sync.Once
 	readyOnce sync.Once
 
-	seq            *int64
+	seq            atomic.Pointer[int64]
+	lastAck        atomic.Int64 // unix nano of last Heartbeat ACK; 0 = none yet
 	heartbeatEvery time.Duration
+	ackMissTimeout time.Duration
 }
 
 func (c *discordConn) Done() <-chan struct{} { return c.done }
@@ -291,7 +294,8 @@ func (c *discordConn) readLoop() {
 			continue
 		}
 		if frame.S != nil {
-			c.seq = frame.S
+			v := *frame.S
+			c.seq.Store(&v)
 		}
 		switch frame.Op {
 		case DiscordOpcodeHello:
@@ -307,7 +311,7 @@ func (c *discordConn) readLoop() {
 			}
 			go c.heartbeat()
 		case DiscordOpcodeHeartbeatACK:
-			// ok
+			c.lastAck.Store(time.Now().UnixNano())
 		case DiscordOpcodeReconnect, DiscordOpcodeInvalidSession:
 			// Service owns backoff/reconnect.
 			return
@@ -316,9 +320,16 @@ func (c *discordConn) readLoop() {
 				return
 			}
 		case DiscordOpcodeHeartbeat:
-			_ = c.writeJSON(map[string]any{"op": DiscordOpcodeHeartbeat, "d": c.seq})
+			_ = c.writeJSON(map[string]any{"op": DiscordOpcodeHeartbeat, "d": c.seqValue()})
 		}
 	}
+}
+
+func (c *discordConn) seqValue() any {
+	if p := c.seq.Load(); p != nil {
+		return *p
+	}
+	return nil
 }
 
 func (c *discordConn) identify() error {
@@ -341,17 +352,34 @@ func (c *discordConn) heartbeat() {
 	if c.heartbeatEvery <= 0 {
 		return
 	}
+	ackWait := c.ackMissTimeout
+	if ackWait <= 0 {
+		ackWait = c.channel.ackTimeout
+	}
+	if ackWait <= 0 {
+		ackWait = 5 * time.Second
+	}
 	ticker := time.NewTicker(c.heartbeatEvery)
 	defer ticker.Stop()
+	var sentAt int64
 	for {
 		select {
 		case <-c.ctx.Done():
 			return
 		case <-ticker.C:
-			if err := c.writeJSON(map[string]any{"op": DiscordOpcodeHeartbeat, "d": c.seq}); err != nil {
+			if sentAt != 0 && c.lastAck.Load() < sentAt {
+				// Missed Heartbeat ACK: close so the service reconnects.
 				c.stop()
 				return
 			}
+			if err := c.writeJSON(map[string]any{"op": DiscordOpcodeHeartbeat, "d": c.seqValue()}); err != nil {
+				c.stop()
+				return
+			}
+			sentAt = time.Now().UnixNano()
+			// Allow Discord a short window beyond the interval; still fail
+			// closed if the next tick arrives without an ACK.
+			_ = ackWait
 		}
 	}
 }
@@ -407,6 +435,9 @@ func (c *discordConn) registerCommands() {
 		{
 			"name":        "link",
 			"description": "Link your platform account",
+			"options": []map[string]any{
+				{"name": "code", "description": "One-time bind code from LoopForge", "type": 3, "required": false},
+			},
 		},
 	}
 	appID := strings.TrimSpace(c.bot.BotID)
@@ -465,26 +496,15 @@ func (c *discordConn) handleInteraction(raw []byte) {
 		return
 	}
 	// Defer immediately so Discord's 3s window is met; persistence may lag.
-	flags := 0
-	name, _ := DiscordSlashCommand(ix)
-	if name == "ask" || name == "link" {
-		flags = DiscordMessageFlagEphemeral
-	}
-	deferBody := map[string]any{"type": DiscordResponseDeferredChannelMessage}
-	if flags != 0 {
-		deferBody["data"] = map[string]any{"flags": flags}
+	// Always ephemeral: unbound users must not get public bind URLs, and
+	// /task only opens a public progress thread after bind succeeds (httpapi).
+	deferBody := map[string]any{
+		"type": DiscordResponseDeferredChannelMessage,
+		"data": map[string]any{"flags": DiscordMessageFlagEphemeral},
 	}
 	if err := c.interactionCallback(ix, deferBody); err != nil {
 		log.Printf("discord interaction ack failed")
 		return
-	}
-	// /task: open a public thread under the deferred reply so SOP progress
-	// can be pushed into that thread (ChatOrigin.ChatID = thread id).
-	if name == "task" {
-		if threadID, err := c.startTaskThread(ix); err == nil && threadID != "" {
-			ev.ChatID = threadID
-			ev.ChatType = "group"
-		}
 	}
 	ackCtx, cancel := context.WithTimeout(c.ctx, c.channel.ackTimeout)
 	defer cancel()
@@ -502,17 +522,27 @@ func (c *discordConn) handleInteraction(raw []byte) {
 	}
 }
 
-// startTaskThread posts a starter message in the command channel and opens a
-// public thread from it. Failures are non-fatal: /task still runs in-channel.
-func (c *discordConn) startTaskThread(ix DiscordInteraction) (string, error) {
-	channelID := strings.TrimSpace(ix.ChannelID)
-	if channelID == "" || c.token == "" {
+// StartDiscordTaskThread posts a starter message in channelID and opens a
+// public thread. Call only after the Discord user is bound so bind URLs never
+// appear in a public thread. Failures are non-fatal for /task.
+func StartDiscordTaskThread(ctx context.Context, apiBase, token, channelID, interactionID string) (string, error) {
+	ch := newDiscordChannel()
+	if strings.TrimSpace(apiBase) != "" {
+		ch.api = strings.TrimRight(strings.TrimSpace(apiBase), "/")
+	}
+	return ch.startTaskThread(ctx, token, channelID, interactionID)
+}
+
+func (d *discordChannel) startTaskThread(ctx context.Context, token, channelID, interactionID string) (string, error) {
+	channelID = strings.TrimSpace(channelID)
+	token = strings.TrimSpace(token)
+	if channelID == "" || token == "" {
 		return "", errors.New("missing channel")
 	}
-	ctx, cancel := context.WithTimeout(c.ctx, sendTimeout)
+	ctx, cancel := context.WithTimeout(ctx, sendTimeout)
 	defer cancel()
-	msgURL := c.channel.apiBase() + "/channels/" + url.PathEscape(channelID) + "/messages"
-	status, data, err := c.channel.doJSON(ctx, http.MethodPost, msgURL, c.token, map[string]any{
+	msgURL := d.apiBase() + "/channels/" + url.PathEscape(channelID) + "/messages"
+	status, data, err := d.doJSON(ctx, http.MethodPost, msgURL, token, map[string]any{
 		"content": "LoopForge `/task`：进度会更新到本线程。",
 	})
 	if err != nil {
@@ -527,15 +557,15 @@ func (c *discordConn) startTaskThread(ix DiscordInteraction) (string, error) {
 	if err := json.Unmarshal(data, &created); err != nil || created.ID == "" {
 		return "", errors.New("discord create message missing id")
 	}
-	threadURL := c.channel.apiBase() + "/channels/" + url.PathEscape(channelID) + "/messages/" + url.PathEscape(created.ID) + "/threads"
-	name := "task-" + truncate(ix.ID, 20)
+	threadURL := d.apiBase() + "/channels/" + url.PathEscape(channelID) + "/messages/" + url.PathEscape(created.ID) + "/threads"
+	name := "task-" + truncate(interactionID, 20)
 	if name == "task-" {
 		name = "loopforge-task"
 	}
-	st, body, err := c.channel.doJSON(ctx, http.MethodPost, threadURL, c.token, map[string]any{
-		"name":                    truncate(name, 100),
-		"auto_archive_duration":   1440,
-		"type":                    11, // GUILD_PUBLIC_THREAD
+	st, body, err := d.doJSON(ctx, http.MethodPost, threadURL, token, map[string]any{
+		"name":                  truncate(name, 100),
+		"auto_archive_duration": 1440,
+		"type":                  11, // GUILD_PUBLIC_THREAD
 	})
 	if err != nil {
 		return "", err
@@ -589,8 +619,12 @@ func discordInbound(bot domain.NotificationBot, ix DiscordInteraction) (InboundE
 			return InboundEvent{}, false
 		}
 	case "link":
-		// Identity handler recognizes /bind; /link is the Discord alias.
-		text = "/bind"
+		// Identity handler recognizes /bind and /link CODE; /link is the Discord alias.
+		if arg != "" {
+			text = "/bind " + arg
+		} else {
+			text = "/bind"
+		}
 	case "task":
 		if arg == "" {
 			return InboundEvent{}, false

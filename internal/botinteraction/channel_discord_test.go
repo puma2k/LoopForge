@@ -165,6 +165,10 @@ func TestDiscordInboundMapping(t *testing.T) {
 	if ev, ok = discordInbound(bot, ix); !ok || ev.Text != "/bind" {
 		t.Fatalf("link = %+v", ev)
 	}
+	ix.Data = &DiscordCommandData{Name: "link", Options: []DiscordCommandOption{{Name: "code", Type: 3, Value: "BINDCODE1"}}}
+	if ev, ok = discordInbound(bot, ix); !ok || ev.Text != "/bind BINDCODE1" {
+		t.Fatalf("link code = %+v", ev)
+	}
 	ix.Data = &DiscordCommandData{Name: "task", Options: []DiscordCommandOption{{Name: "description", Type: 3, Value: "ship it"}}}
 	if ev, ok = discordInbound(bot, ix); !ok || ev.Text != "/task ship it" {
 		t.Fatalf("task = %+v", ev)
@@ -444,10 +448,7 @@ func TestStartDiscordTaskThread(t *testing.T) {
 		}
 	}))
 	t.Cleanup(srv.Close)
-	ch := newDiscordChannel()
-	ch.api = srv.URL
-	c := &discordConn{channel: ch, token: "SECRETTOKEN", ctx: context.Background(), bot: domain.NotificationBot{BotID: "app"}}
-	id, err := c.startTaskThread(DiscordInteraction{ID: "ix-long-id-12345", ChannelID: "ch-1"})
+	id, err := StartDiscordTaskThread(context.Background(), srv.URL, "SECRETTOKEN", "ch-1", "ix-long-id-12345")
 	if err != nil || id != "thread-9" {
 		t.Fatalf("id=%q err=%v posts=%v", id, err, posts)
 	}

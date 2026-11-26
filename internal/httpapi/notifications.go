@@ -203,7 +203,9 @@ func (h *notificationHandlers) save(c *gin.Context, old *domain.NotificationBot)
 			// Web confirmation works on every channel: drafts run only
 			// after the bound user confirms them on the platform page.
 			bot.WriteApproval = mode
-		case mode == domain.BotWriteAuto && channel == domain.BotChannelWeCom:
+		case mode == domain.BotWriteAuto && (channel == domain.BotChannelWeCom || channel == domain.BotChannelDiscord):
+			// WeCom historically auto-executed; Discord /task needs auto
+			// (or confirm) to create requirements — readonly rejects /task.
 			bot.WriteApproval = mode
 		default:
 			c.JSON(400, gin.H{"error": "该渠道只支持只读查询或网页确认"})

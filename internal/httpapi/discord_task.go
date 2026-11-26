@@ -4,6 +4,7 @@ import (
 	"agentflow/internal/botinteraction"
 	"agentflow/internal/domain"
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -14,8 +15,8 @@ const discordTaskDescMax = 2000
 const discordTaskTitleMax = 80
 
 // handleDiscordTask handles Discord "/task …" from a bound user: creates a
-// local requirement and dispatches the resolved SOP. Non-task messages return
-// handled=false so the normal model path continues.
+// local requirement and dispatches the resolved SOP when write policy allows.
+// Non-task messages return handled=false so the normal model path continues.
 func (h *assistantHandlers) handleDiscordTask(ctx context.Context, bot domain.NotificationBot, conv domain.BotConversation, item domain.BotInteraction, user domain.User) (string, bool) {
 	cmd := botIdentityCommand(item.Content)
 	desc, ok := discordTaskDescription(cmd)
@@ -28,13 +29,33 @@ func (h *assistantHandlers) handleDiscordTask(ctx context.Context, bot domain.No
 	if utf8.RuneCountInString(desc) > discordTaskDescMax {
 		desc = truncateRunes(desc, discordTaskDescMax)
 	}
-	workflowID := discordTaskWorkflowID(bot, conv.ChatID)
+	// SOP map keys are Discord channel IDs; keep conv.ChatID as the channel
+	// (Gateway never rewrites it to a thread id before bind).
+	channelID := strings.TrimSpace(conv.ChatID)
+	workflowID := discordTaskWorkflowID(bot, channelID)
 	if workflowID == "" {
 		if project, ok := h.repo.Project(bot.ProjectID); ok {
 			workflowID = strings.TrimSpace(project.WorkflowID)
 		}
 	}
 	title := truncateRunes(desc, discordTaskTitleMax)
+
+	switch bot.EffectiveWriteApproval() {
+	case domain.BotWriteReadOnly:
+		return "当前 Bot 为只读模式：`/task` 需要创建需求并启动 SOP。请到平台页面操作，或让管理员将写入策略改为「网页确认」或「自动执行」。", true
+	case domain.BotWriteConfirm:
+		body, err := json.Marshal(map[string]any{
+			"projectId": bot.ProjectID, "title": title, "description": desc,
+			"kind": "requirement", "source": "local", "workflowId": workflowID,
+			"assigneeUserId": user.ID, "priority": "medium", "status": "todo",
+		})
+		if err != nil {
+			return "准备需求草稿失败，请稍后重试或到平台页面手动创建。", true
+		}
+		head := "已准备创建需求「" + title + "」。"
+		return head + h.confirmBotDrafts(ctx, bot, user, item, []assistantDraft{{Tool: "issues_save", Body: body}}), true
+	}
+
 	issue := domain.Issue{
 		ID:             fmt.Sprintf("issue-%d", time.Now().UnixNano()),
 		ProjectID:      bot.ProjectID,
@@ -63,9 +84,17 @@ func (h *assistantHandlers) handleDiscordTask(ctx context.Context, bot domain.No
 	if !ok {
 		stored = issue
 	}
+	progressChatID := channelID
+	threadKey := strings.TrimSpace(item.PlatformEventID)
+	if threadKey == "" {
+		threadKey = item.ID
+	}
+	if threadID := h.discordOpenTaskThread(ctx, bot, channelID, threadKey); threadID != "" {
+		progressChatID = threadID
+	}
 	origin := domain.BotChatOrigin{
 		ConfigID: bot.ID, ProjectID: bot.ProjectID, ConversationID: conv.ID,
-		ChatType: conv.ChatType, ChatID: conv.ChatID, SenderID: item.SenderID, UserID: user.ID,
+		ChatType: conv.ChatType, ChatID: progressChatID, SenderID: item.SenderID, UserID: user.ID,
 	}
 	h.recordBotOrigin(origin, true, stored.ID)
 	task, err := dispatchIssue(h.deps, dispatchRequest{
@@ -78,6 +107,23 @@ func (h *assistantHandlers) handleDiscordTask(ctx context.Context, bot domain.No
 	runURL, issueURL := discordTaskLinks(h, stored, task)
 	steps := []string{"已创建需求 " + label, "已启动 SOP" + botRunLabel(task.RunID)}
 	return FormatDiscordTaskProgress(steps, runURL, issueURL, ""), true
+}
+
+// discordOpenTaskThread creates a public progress thread after bind. Empty on
+// any failure so /task still replies ephemerally in-channel.
+func (h *assistantHandlers) discordOpenTaskThread(ctx context.Context, bot domain.NotificationBot, channelID, interactionID string) string {
+	if h == nil || h.repo == nil || strings.TrimSpace(channelID) == "" {
+		return ""
+	}
+	secret, err := h.repo.BotCredential(bot.ID)
+	if err != nil || strings.TrimSpace(secret) == "" {
+		return ""
+	}
+	threadID, err := botinteraction.StartDiscordTaskThread(ctx, "", secret, channelID, interactionID)
+	if err != nil || threadID == "" {
+		return ""
+	}
+	return threadID
 }
 
 func discordTaskDescription(cmd string) (desc string, ok bool) {
