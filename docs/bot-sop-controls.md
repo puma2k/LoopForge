@@ -1,6 +1,6 @@
 # Main Bot 流程交接与交付验收
 
-> 历史设计记录：旧角色群协作、群清单、自动跟进及切回 SOP 写入口已移除，不再按本文启动或操作。当前实现与环境选择见 [对话工作区](conversation-workspaces.md)。
+> 历史设计记录：旧角色群协作、群清单、自动跟进及切回 SOP 写入口已移除，不再按本文启动或操作。当前实现与环境选择见 [对话工作区](conversation-workspaces.md)。Discord `/task` 使用与本文相同的 SOP 派发语义（创建需求后 `dispatchIssue`），渠道配置见 [discord-bot.md](discord-bot.md)。
 
 自由协作的 `waiting` 表示等待后续指令，不代表存在人工审批门禁。节点执行结束、验证结果和用户验收是三个独立事实。
 

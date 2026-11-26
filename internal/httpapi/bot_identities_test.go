@@ -112,7 +112,7 @@ func TestBotBindingLinkSurvivesNotificationRedaction(t *testing.T) {
 // Feishu and DingTalk send plain text: the link must be a bare URL on its
 // own line, or auto-linking keeps the Markdown ")" and the token breaks.
 func TestBotBindingLinkIsBareURLOnPlainTextChannels(t *testing.T) {
-	for _, channel := range []string{domain.BotChannelFeishu, domain.BotChannelDingTalk} {
+	for _, channel := range []string{domain.BotChannelFeishu, domain.BotChannelDingTalk, domain.BotChannelDiscord} {
 		_, assistant, bot := botFixture(t)
 		bot.Channel = channel
 		h := &botIdentityHandlers{deps: assistant.deps, publicURL: staticPublicURL("https://platform.example/")}

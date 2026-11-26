@@ -52,6 +52,8 @@ func botChannelName(bot domain.NotificationBot) string {
 		return "飞书"
 	case domain.BotChannelDingTalk:
 		return "钉钉"
+	case domain.BotChannelDiscord:
+		return "Discord"
 	default:
 		return "企业微信"
 	}
@@ -61,7 +63,7 @@ func botChannelName(bot domain.NotificationBot) string {
 // binding or unbinding exchange, which must not be replayed to the model.
 func isBotBindingExchange(entry domain.BotInteraction) bool {
 	command := botIdentityCommand(entry.Content)
-	return strings.HasPrefix(command, "/bind") || command == "/unbind" || command == "解除绑定" || strings.Contains(entry.Reply, "/bot-bind.html#")
+	return strings.HasPrefix(command, "/bind") || strings.HasPrefix(command, "/link") || command == "/unbind" || command == "解除绑定" || strings.Contains(entry.Reply, "/bot-bind.html#")
 }
 
 // botReplyMessages turns the conversation history plus the current message
@@ -93,6 +95,11 @@ func (h *assistantHandlers) generateBotReply(ctx context.Context, bot domain.Not
 	user, err := h.botExecutionUser(bot, item.SenderID)
 	if err != nil {
 		return "绑定的平台账号不可用或已失去项目权限，请在平台检查配置。", nil
+	}
+	if bot.ChannelKind() == domain.BotChannelDiscord {
+		if reply, handled := h.handleDiscordTask(ctx, bot, conv, item, user); handled {
+			return reply, nil
+		}
 	}
 	// Writes this turn makes run as user; the audit trail also names the IM
 	// sender that asked for them.

@@ -23,10 +23,10 @@ type NotificationBot struct {
 	OwnerID   int64  `json:"ownerId"`
 	Model     string `json:"model,omitempty"`
 	Name      string `json:"name"`
-	// Channel is wecom, feishu or dingtalk. Empty means a legacy WeCom record.
+	// Channel is wecom, feishu, dingtalk or discord. Empty means a legacy WeCom record.
 	Channel string `json:"channel,omitempty"`
 	// BotID is the external application identity: the WeCom Bot ID, Feishu
-	// App ID or DingTalk Client ID.
+	// App ID, DingTalk Client ID or Discord Application ID.
 	BotID              string     `json:"botId"`
 	InteractionEnabled bool       `json:"interactionEnabled"`
 	Enabled            bool       `json:"enabled"`
@@ -51,8 +51,8 @@ type NotificationBot struct {
 	// plaintext ("plaintext") or sealed ("encrypted"). Filled on read.
 	CredentialFormat string `json:"credentialFormat,omitempty"`
 
-	// Enterprise scope (Feishu tenant_key, DingTalk CorpId). TenantState is
-	// awaiting_confirmation, locked or conflict; empty for WeCom.
+	// Enterprise scope (Feishu tenant_key, DingTalk CorpId, Discord Guild ID).
+	// TenantState is awaiting_confirmation, locked or conflict; empty for WeCom.
 	TenantKey         string           `json:"tenantKey,omitempty"`
 	TenantName        string           `json:"tenantName,omitempty"`
 	TenantState       string           `json:"tenantState,omitempty"`
@@ -60,10 +60,25 @@ type NotificationBot struct {
 	TenantConfirmedBy int64            `json:"tenantConfirmedBy,omitempty"`
 	TenantConfirmedAt *time.Time       `json:"tenantConfirmedAt,omitempty"`
 	// TenantExpected is the enterprise scope an administrator entered
-	// (DingTalk CorpId). The first trusted event that matches it locks the
-	// scope automatically; a different value moves the state to conflict.
+	// (DingTalk CorpId or Discord Guild ID). The first trusted event that
+	// matches it locks the scope automatically; a different value moves the
+	// state to conflict.
 	TenantExpected   string `json:"tenantExpected,omitempty"`
 	TenantExpectedBy int64  `json:"tenantExpectedBy,omitempty"`
+
+	// Discord-only fields (JSON in payload; no migration).
+	// PublicKey is the Discord application public key hex for Interactions HTTP verify.
+	PublicKey string `json:"publicKey,omitempty"`
+	// AllowedChannelIDs limits slash commands to these Discord channels;
+	// empty means every channel in the allowed guild.
+	AllowedChannelIDs []string `json:"allowedChannelIds,omitempty"`
+	// DefaultWorkflowID is the default SOP for Discord /task when no
+	// per-channel mapping matches.
+	DefaultWorkflowID string `json:"defaultWorkflowId,omitempty"`
+	// ChannelWorkflowIDs maps Discord channel ID → SOP workflow ID.
+	ChannelWorkflowIDs map[string]string `json:"channelWorkflowIds,omitempty"`
+	// SecretHint is an API-only masked token hint (••••abcd); never store the real token.
+	SecretHint string `json:"secretHint,omitempty"`
 }
 
 // TenantCandidate is the enterprise scope observed on the first trusted
@@ -80,6 +95,7 @@ const (
 	BotChannelWeCom    = "wecom"
 	BotChannelFeishu   = "feishu"
 	BotChannelDingTalk = "dingtalk"
+	BotChannelDiscord  = "discord"
 
 	BotWriteReadOnly = "readonly"
 	BotWriteAuto     = "auto"
@@ -99,6 +115,8 @@ func (b NotificationBot) ChannelKind() string {
 		return BotChannelFeishu
 	case BotChannelDingTalk:
 		return BotChannelDingTalk
+	case BotChannelDiscord:
+		return BotChannelDiscord
 	default:
 		return BotChannelWeCom
 	}

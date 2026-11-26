@@ -61,6 +61,7 @@ func New(store *repo.Store) *Service {
 	s.channels[ChannelWeCom] = &wecomChannel{svc: s}
 	s.channels[ChannelFeishu] = newFeishuChannel()
 	s.channels[ChannelDingTalk] = newDingTalkChannel()
+	s.channels[ChannelDiscord] = newDiscordChannel()
 	return s
 }
 
