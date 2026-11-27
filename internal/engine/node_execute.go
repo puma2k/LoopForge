@@ -233,7 +233,7 @@ func resolveNodeExecutor(st *repo.Store, node domain.WorkflowNode, agent domain.
 func workflowSandboxRequirements(st *repo.Store, wf domain.WorkflowDefinition) (runtime.SandboxRequirements, error) {
 	var requirements []runtime.SandboxRequirements
 	for _, node := range wf.Nodes {
-		if node.Type == "script" || node.Type == "command" || node.Type == "approval" || node.Type == "sop" {
+		if node.Type == "script" || node.Type == "command" || node.Type == "approval" || node.Type == "sop" || node.Type == "webhook" || node.Type == "webhook_inbound" {
 			continue
 		}
 		agent, ok := workflowAgent(st, wf, node.AgentID)
@@ -714,6 +714,10 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 	requiresSubmit := false
 	var runOnce func(string) (string, error)
 	switch node.Type {
+	case "webhook", "webhook_inbound":
+		runOnce = func(string) (string, error) {
+			return "# Webhook trigger\n\nThis node marks an inbound-webhook entry point. Payload variables are available in run input as `webhook.payload`, `webhook.headers`, `webhook.channelId`, and `webhook.eventId`.\n", nil
+		}
 	case "script", "command":
 		runOnce = func(string) (string, error) {
 

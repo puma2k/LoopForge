@@ -189,6 +189,8 @@ func validate(wf domain.WorkflowDefinition) error {
 func validateNode(workflowID string, n domain.WorkflowNode) error {
 	switch n.Type {
 	case "agent", "approval":
+	case "webhook", "webhook_inbound":
+		// Optional SOP trigger marker; executes as an immediate success no-op.
 	case "sop":
 		if strings.TrimSpace(n.SOPWorkflowID) == "" {
 			return fmt.Errorf("node %s sopWorkflowId is required", n.ID)

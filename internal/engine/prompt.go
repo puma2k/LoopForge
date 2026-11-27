@@ -32,6 +32,10 @@ func applyPromptPlaceholders(st *repo.Store, wf domain.WorkflowDefinition, node 
 		prompt += "\n\n## 本次运行输入\n\n{{input}}"
 	}
 	prompt = strings.ReplaceAll(prompt, "{{input}}", run.Input)
+	prompt = strings.ReplaceAll(prompt, "{{webhook.payload}}", extractWebhookSection(run.Input, "webhook.payload"))
+	prompt = strings.ReplaceAll(prompt, "{{webhook.headers}}", extractWebhookSection(run.Input, "webhook.headers"))
+	prompt = strings.ReplaceAll(prompt, "{{webhook.channelId}}", extractWebhookField(run.Input, "webhook.channelId"))
+	prompt = strings.ReplaceAll(prompt, "{{webhook.eventId}}", extractWebhookField(run.Input, "webhook.eventId"))
 	prompt = strings.ReplaceAll(prompt, "{{repository}}", promptRepositoryLine(run))
 	repositories := run.RepositoryContexts()
 	if run.UsesConversationWorkspace() {
@@ -274,6 +278,39 @@ func writePromptList(b *strings.Builder, title string, values []string) {
 		}
 	}
 	b.WriteString("\n")
+}
+
+func extractWebhookField(input, key string) string {
+	prefix := "- " + key + ":"
+	for _, line := range strings.Split(input, "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, prefix) {
+			return strings.TrimSpace(strings.TrimPrefix(line, prefix))
+		}
+	}
+	return ""
+}
+
+func extractWebhookSection(input, key string) string {
+	marker := "- " + key + ":"
+	idx := strings.Index(input, marker)
+	if idx < 0 {
+		return ""
+	}
+	rest := input[idx+len(marker):]
+	start := strings.Index(rest, "```")
+	if start < 0 {
+		return strings.TrimSpace(rest)
+	}
+	rest = rest[start+3:]
+	if nl := strings.IndexByte(rest, '\n'); nl >= 0 {
+		rest = rest[nl+1:]
+	}
+	end := strings.Index(rest, "```")
+	if end < 0 {
+		return strings.TrimSpace(rest)
+	}
+	return strings.TrimSpace(rest[:end])
 }
 
 func appendArtifactContract(prompt string, node domain.WorkflowNode, repositories []domain.RepositoryContext) string {
