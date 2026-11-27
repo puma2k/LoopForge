@@ -67,8 +67,12 @@ const CALQUES = [
   "có không khả dụng",
   "và khác nâng cao",
   "không đã tìm thấy",
+  "Không đã ",
   "Mới nhất SOP",
+  "mới nhất SOP",
   "Không khác dự án",
+  "Các Issue",
+  "GitHub Các Issue",
 ];
 
 /** Calques matched with a trailing boundary so "không thể làm" is not hit. */
@@ -84,6 +88,11 @@ const CALQUE_RES = [
   {
     re: /là trong$/g,
     detail: "là trong$",
+  },
+  // 新建X → "Mới <noun>" calque (keep "Mới bắt đầu" / "Mới nhất" allowed).
+  {
+    re: /^Mới (quy tắc|Skill|Sandbox|Dockerfile|bước|Agent\b|cài đặt|lĩnh vực)\b/u,
+    detail: "Mới <noun> (新建 calque)",
   },
 ];
 
@@ -1827,9 +1836,11 @@ const KNOWN_BAD_VI_RES = [
 ];
 
 /**
- * 执行机器 must be "máy thực thi" — never runner / máy chạy.
+ * 执行机器 / UI 机器 labels must be "máy thực thi" — never runner / máy chạy.
  * Also catch inverted "máy thực thi <noun>" when the Chinese key ends with
  * 版本 / 状态 / 名称 / 类型 / 列表 (should be "<noun> máy thực thi").
+ * When the Chinese key already contains Latin "Runner" as a product name,
+ * that token is allowed in the VI value.
  */
 function checkExecMachineTerminology(key, value) {
   const issues = [];
@@ -1841,9 +1852,22 @@ function checkExecMachineTerminology(key, value) {
     }
   }
 
-  if (!key.includes("执行机器")) return issues;
-  if (/\brunners?\b/i.test(value) || /máy chạy/i.test(value)) {
-    issues.push({ type: "term", detail: "执行机器 must be máy thực thi" });
+  const hasExec = key.includes("执行机器");
+  const hasMachine = key.includes("机器");
+  if (!hasExec && !hasMachine) return issues;
+
+  // Strip intentional product-name Runner copied from the Chinese key.
+  let probe = value;
+  if (/\bRunner\b/i.test(key)) {
+    probe = probe.replace(/\bRunners?\b/gi, "");
+  }
+  if (/\brunners?\b/i.test(probe) || /máy chạy/i.test(probe)) {
+    issues.push({
+      type: "term",
+      detail: hasExec
+        ? "执行机器 must be máy thực thi"
+        : "机器 must be máy thực thi",
+    });
   }
   // Key like 执行机器版本 / 执行机器状态 / … → value must not start with
   // "máy thực thi phiên bản|trạng thái|…"

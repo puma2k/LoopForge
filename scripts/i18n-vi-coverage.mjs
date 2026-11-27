@@ -36,6 +36,59 @@ export const ALLOWLIST = [
     text: "该",
     reason: "single-char fragment excluded by i18n.js (≥3 Han); EN-only stub",
   },
+  // Sample fills with empty refs.length / refs.join — not a real runtime string.
+  {
+    text: "规则仍被  个引用（），请先解除引用",
+    reason: "coverage sample with empty ref count/names; real string uses %s holes",
+  },
+  {
+    text: "技能仍被  个引用（），请先解除引用",
+    reason: "coverage sample with empty ref count/names; real string uses %s holes",
+  },
+  {
+    text: "沙箱仍被  个引用（），请先解除引用",
+    reason: "coverage sample with empty ref count/names; real string uses %s holes",
+  },
+  {
+    text: "资产仍被  个引用（），请先解除引用",
+    reason: "coverage sample with empty ref count/names; real string uses %s holes",
+  },
+  {
+    text: "Skill仍被  个Skill引用（），请先解除引用",
+    reason: "coverage sample with empty ref count/names",
+  },
+  {
+    text: "Skill仍被  个引用（），请先解除引用",
+    reason: "coverage sample with empty ref count/names",
+  },
+  {
+    text: "MCP仍被  个引用（），请先解除引用",
+    reason: "coverage sample with empty ref count/names",
+  },
+  {
+    text: "SOP仍被  个引用（），请先解除引用",
+    reason: "coverage sample with empty ref count/names",
+  },
+  {
+    text: "规则 ·",
+    reason: "truncated HTML-in-JS sample crumb from flows chrome; not standalone UI",
+  },
+  {
+    text: "技能 ·",
+    reason: "truncated HTML-in-JS sample crumb from flows chrome; not standalone UI",
+  },
+  {
+    text: "资产 ·",
+    reason: "truncated HTML-in-JS sample crumb from flows chrome; not standalone UI",
+  },
+  {
+    text: "%s 成功 / %s 失败${view.firstPass!=null?",
+    reason: "broken extract of nested template ternary — incomplete source slice",
+  },
+  {
+    text: ",'保存项目设置时同时清空 Workspace 与 Iteration，已导入的需求不受影响。',",
+    reason: "JS array literal slice mis-extracted as display string",
+  },
 ];
 
 /**
@@ -385,27 +438,91 @@ export const INTERP_SAMPLES = [
 ];
 
 /**
+ * True when a ${…} expression interpolates an asset kind/label.
+ * Bare `label` only counts in delete/create confirm templates (assets.js),
+ * not machine/CLI pickers (`执行机器：${label}` / `启用 ${label}`).
+ */
+export function isLabelExpr(expr, raw = "") {
+  const e = String(expr || "");
+  if (
+    /^\s*escapeHTML\s*\(\s*kind\s*\)\s*$/.test(e) ||
+    /^\s*kind\s*$/.test(e) ||
+    /assetKindLabel\s*\(/.test(e)
+  ) {
+    return true;
+  }
+  if (/^\s*label\s*$/.test(e)) {
+    return /删除|确认删除|已删除|新建|创建/.test(String(raw || ""));
+  }
+  return false;
+}
+
+/**
  * Only probe sample fills when the template interpolates a display label
- * (e.g. escapeHTML(kind) / assetKindLabel), not ids, counts, or control flow.
+ * (e.g. escapeHTML(kind) / assetKindLabel / label), not ids, counts, or control flow.
  */
 export function shouldSampleExpand(raw, normalized) {
   if (!raw || !normalized || !/%s/.test(normalized)) return false;
   if (!/\$\{/.test(raw)) return false;
   const exprs = [...String(raw).matchAll(/\$\{([^}]+)\}/g)].map((m) => m[1]);
   if (!exprs.length) return false;
-  return exprs.some(
-    (e) =>
-      /^\s*escapeHTML\s*\(\s*kind\s*\)\s*$/.test(e) ||
-      /^\s*kind\s*$/.test(e) ||
-      /assetKindLabel\s*\(/.test(e) ||
-      /KindLabel\s*\(/.test(e),
-  );
+  return exprs.some((e) => isLabelExpr(e, raw));
 }
 
-/** Fill a single %s hole with a sample; skip multi-hole fragments (avoids 规则规则). */
+/**
+ * Expand ${a?b:c} ternaries whose branches are Chinese string literals into
+ * separate templates (e.g. 共享/本项目 + kind → 本项目规则).
+ */
+export function expandChineseTernaries(raw) {
+  const s = String(raw || "");
+  const re = /\$\{([^}]*['"][^'"]*[\u3400-\u9fff][^'"]*['"][^}]*)\}/;
+  const m = s.match(re);
+  if (!m) return [s];
+  const branches = [
+    ...m[1].matchAll(/'([^']*)'|"([^"]*)"/g),
+  ]
+    .map((x) => x[1] || x[2])
+    .filter((b) => b && HAN.test(b));
+  if (branches.length < 2) return [s];
+  return branches.flatMap((b) => expandChineseTernaries(s.replace(m[0], b)));
+}
+
+/**
+ * Fill label-like ${…} with INTERP_SAMPLES; name-like holes → Foo; others → "".
+ * Multi-hole templates only expand label holes (review: probe each label hole).
+ */
+export function sampleFilledTemplates(raw) {
+  const normalized = normalizePlaceholders(raw);
+  if (!shouldSampleExpand(raw, normalized)) return [];
+  const variants = expandChineseTernaries(raw);
+  const out = [];
+  for (const variant of variants) {
+    for (const fill of INTERP_SAMPLES) {
+      const filled = String(variant).replace(/\$\{([^}]+)\}/g, (_, expr) => {
+        if (isLabelExpr(expr, variant)) return fill;
+        // Name / search query holes → Foo so 「%s」 samples stay realistic.
+        if (/\.name\b|copy\.page|\bquery\b|assetQuery|trim\(/.test(expr)) {
+          return "Foo";
+        }
+        // assets.js aria go prefix (查看/编辑) — use one representative.
+        if (/^\s*go\s*$/.test(expr)) return "查看";
+        return "";
+      });
+      if (HAN.test(filled)) out.push(filled);
+    }
+  }
+  return [...new Set(out)];
+}
+
+/**
+ * Probe fills for an already-normalized piece containing %s.
+ * Single-hole: INTERP_SAMPLES. Multi-hole pieces are handled via
+ * sampleFilledTemplates on the raw template instead (avoids 规则创建规则).
+ */
 export function sampleFillsForPiece(piece) {
   const text = String(piece || "");
-  if ((text.match(/%s/g) || []).length !== 1) return [];
+  const holes = (text.match(/%s/g) || []).length;
+  if (holes !== 1) return [];
   return INTERP_SAMPLES.map((fill) => text.replace(/%s/g, fill));
 }
 
@@ -585,12 +702,12 @@ export function isFullyTranslated(text, translate) {
   if (isNonDisplaySource(text)) return true;
   const direct = translate(text);
   if (!HAN.test(direct)) return true;
-  // Placeholder-normalized variant (dynamic templates).
+  // Placeholder-normalized variant (dynamic templates / printf keys).
   const normalized = normalizePlaceholders(text);
   if (normalized !== text && !HAN.test(translate(normalized))) return true;
-  // Collapse %s holes left by template rewrite.
-  const collapsed = normalized.replace(/%s/g, " ").replace(/\s+/g, " ").trim();
-  if (collapsed !== text && !HAN.test(translate(collapsed))) return true;
+  // Do NOT strip %s then translate the leftover stub (创建%s → 创建 → Tạo).
+  // That falsely marks templates covered while runtime 创建规则 stays Chinese.
+  // Sample fills from extractDisplayStrings catch the runtime shapes instead.
   return false;
 }
 
@@ -623,7 +740,7 @@ export function extractDisplayStrings(src, { isHtml = false, isJsx = false } = {
     if (looksLikeHtml(text)) {
       for (const p of extractFromHtml(text)) {
         push(p.text, index, `html-in-js-${p.kind}`);
-        // Probe runtime fills for label-like ${kind} holes left as %s.
+        // Single-%s pieces still get local sample fills.
         if (sample) {
           for (const filled of sampleFillsForPiece(p.text)) {
             push(filled, index, `html-in-js-${p.kind}-sample`);
@@ -635,6 +752,19 @@ export function extractDisplayStrings(src, { isHtml = false, isJsx = false } = {
       if (sample) {
         for (const filled of sampleFillsForPiece(text)) {
           push(filled, index, `${kind}-sample`);
+        }
+      }
+    }
+    // Label-aware raw expansion (multi-hole + Chinese ternaries → runtime shapes).
+    if (sample) {
+      for (const filledRaw of sampleFilledTemplates(raw)) {
+        const filledText = normalizePlaceholders(filledRaw);
+        if (looksLikeHtml(filledText) || looksLikeHtml(filledRaw)) {
+          for (const p of extractFromHtml(filledText)) {
+            push(p.text, index, `html-in-js-sample`);
+          }
+        } else {
+          push(filledText, index, `${kind}-sample`);
         }
       }
     }

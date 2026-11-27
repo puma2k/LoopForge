@@ -119,6 +119,33 @@ describe("createTranslator + isFullyTranslated", () => {
     assert.equal(isFullyTranslated("Skill内容", tr2), true);
     assert.equal(isFullyTranslated("给Skill起个名字", tr2), true);
   });
+
+  it("does not treat collapse of %s stubs as covered (创建%s → 创建)", () => {
+    const dict2 = {
+      ...dict,
+      创建: "Tạo",
+      规则: "Quy tắc",
+    };
+    const { translate: tr2 } = createTranslator(dict2);
+    // Old collapse path: 创建%s → stub 创建 → Tạo (false covered). Must stay uncovered.
+    assert.equal(isFullyTranslated("创建%s", tr2), false);
+    assert.equal(isFullyTranslated("创建规则", tr2), false);
+  });
+
+  it("covers 创建%s / 创建规则 when printf key exists", () => {
+    const dict2 = {
+      ...dict,
+      "创建%s": "Tạo %s",
+      规则: "Quy tắc",
+      创建规则: "Tạo quy tắc",
+    };
+    const { translate: tr2 } = createTranslator(dict2);
+    assert.equal(tr2("创建规则"), "Tạo quy tắc");
+    // printf on the template leaves "%s" but no Han → covered
+    assert.equal(tr2("创建%s"), "Tạo %s");
+    assert.equal(isFullyTranslated("创建%s", tr2), true);
+    assert.equal(isFullyTranslated("创建规则", tr2), true);
+  });
 });
 
 describe("extractDisplayStrings samples for ${…}", () => {
@@ -134,6 +161,34 @@ describe("extractDisplayStrings samples for ${…}", () => {
     assert.ok(
       [...texts].some((t) => t === "给规则起个名字" || t === "给Skill起个名字"),
       `expected sample fills, got ${JSON.stringify([...texts])}`,
+    );
+  });
+
+  it("probes multi-hole label templates without all-same compounds", () => {
+    const src = `
+      const label = assetKindLabel();
+      btn.textContent = \`\${huiIcon('plus')}创建\${escapeHTML(kind)}\`;
+      count.innerHTML = \`\${scope==='shared'?'共享':'本项目'}\${escapeHTML(assetKindLabel())}\`;
+      if(!await afConfirm({message:\`确认删除\${label}「\${item.name}」？此操作不可恢复。\`}))return;
+    `;
+    const parts = extractDisplayStrings(src, { isHtml: false });
+    const texts = new Set(parts.map((p) => p.text));
+    assert.ok(
+      [...texts].some((t) => t === "创建规则" || t === "创建技能"),
+      `expected 创建规则 sample, got ${JSON.stringify([...texts])}`,
+    );
+    assert.ok(
+      texts.has("本项目规则") || texts.has("共享规则"),
+      `expected 本项目/共享规则 sample, got ${JSON.stringify([...texts])}`,
+    );
+    assert.ok(
+      [...texts].some((t) => /确认删除规则「Foo」/.test(t)),
+      `expected confirm sample with Foo name, got ${JSON.stringify([...texts])}`,
+    );
+    assert.equal(
+      [...texts].some((t) => t === "规则创建规则"),
+      false,
+      "must not emit all-same multi-hole compound 规则创建规则",
     );
   });
 });

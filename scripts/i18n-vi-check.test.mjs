@@ -248,6 +248,43 @@ describe("i18n-vi-check must-fail cases (review findings)", () => {
     }
   });
 
+  it("catches Không đã / Mới <noun> / mới nhất SOP / Các Issue calques", () => {
+    const bad = [
+      ["未接入", "Không đã kết nối"],
+      ["尚未选择", "Không đã chọn"],
+      ["未闭环", "Không đã đóng"],
+      ["新建规则", "Mới quy tắc"],
+      ["新建技能", "Mới Skill"],
+      ["新建沙箱", "Mới Sandbox"],
+      ["已更新为最新 SOP", "Đã cập nhật đến mới nhất SOP"],
+      ["更新为最新 SOP（", "Cập nhật đến mới nhất SOP ("],
+      ["个关联 GitHub Issue", " liên kết GitHub Các Issue"],
+    ];
+    for (const [key, v] of bad) {
+      const issues = checkValue(key, v);
+      assert.ok(
+        hasType(issues, "calque"),
+        `expected calque in ${JSON.stringify(v)}: ${JSON.stringify(issues)}`,
+      );
+    }
+  });
+
+  it("catches runner/máy chạy when key has 机器 (UI labels)", () => {
+    const bad = [
+      ["接入新机器", "Kết nối runner"],
+      ["我的机器", "Runner của tôi"],
+      ["默认机器", "Mặc định runner"],
+      ["当前默认机器", "Máy chạy mặc định hiện tại"],
+    ];
+    for (const [key, v] of bad) {
+      const issues = checkValue(key, v);
+      assert.ok(
+        hasType(issues, "term"),
+        `expected term in ${JSON.stringify(v)}: ${JSON.stringify(issues)}`,
+      );
+    }
+  });
+
   it("blacklist wins over allowlist when a word is on both", () => {
     // "Contents" is blacklisted; even a product-looking sentence must fail.
     const issues = checkValue(
@@ -449,6 +486,38 @@ describe("i18n-vi-check must-pass cases", () => {
       ["其他项目还没有共享", "Các dự án khác chưa chia sẻ "],
       ["运行不存在", "Không tìm thấy lần chạy"],
       ["没有找到指定的 MCP server", "Không tìm thấy máy chủ MCP đã chỉ định"],
+    ];
+    for (const [key, value] of good) {
+      const issues = checkValue(key, value);
+      assert.deepEqual(
+        issues,
+        [],
+        `unexpected issues for ${value}: ${JSON.stringify(issues)}`,
+      );
+    }
+  });
+
+  it("passes fixed Không đã / Mới / SOP / Issue and máy thực thi labels", () => {
+    const good = [
+      ["未接入", "Chưa kết nối"],
+      ["尚未选择", "Chưa chọn"],
+      ["未闭环", "Chưa đóng vòng"],
+      ["新建规则", "Quy tắc mới"],
+      ["新建技能", "Skill mới"],
+      ["新建沙箱", "Sandbox mới"],
+      ["已更新为最新 SOP", "Đã cập nhật lên SOP mới nhất"],
+      ["更新为最新 SOP（", "Cập nhật lên SOP mới nhất ("],
+      ["个关联 GitHub Issue", " Issue GitHub liên kết"],
+      ["请粘贴 GitHub Issue 链接", "Dán liên kết GitHub Issue"],
+      ["接入新机器", "Kết nối máy thực thi mới"],
+      ["我的机器", "Máy thực thi của tôi"],
+      ["默认机器", "Máy thực thi mặc định"],
+      ["当前默认机器", "Máy thực thi mặc định hiện tại"],
+      ["创建%s", "Tạo %s"],
+      ["本项目%s", "%s của dự án này"],
+      ["共享%s", "%s dùng chung"],
+      ["%s已删除", "Đã xóa %s"],
+      ["确认删除%s「%s」？此操作不可恢复。", "Xóa %s “%s”? Thao tác này không thể hoàn tác."],
     ];
     for (const [key, value] of good) {
       const issues = checkValue(key, value);
