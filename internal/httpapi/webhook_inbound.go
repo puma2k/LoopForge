@@ -168,7 +168,18 @@ func (h *webhooksHandlers) inbound(c *gin.Context) {
 			ID: eventID, ChannelID: ch.ID, ProjectID: ch.ProjectID, Status: domain.WebhookEventRejected,
 			Reason: "timestamp_expired", ClientIP: clientIP, PayloadBytes: len(raw), ReceivedAt: now,
 		}, "")
-		c.JSON(401, gin.H{"error": "timestamp outside allowed window"})
+		c.JSON(401, gin.H{"error": "timestamp outside allowed window", "reason": "timestamp_expired"})
+		return
+	}
+
+	// Verify auth before claiming nonce so forged signatures cannot burn nonces.
+	okAuth, authReason := h.verifyWebhookAuth(ch, c.Request, raw, now)
+	if !okAuth {
+		_ = h.repo.RecordWebhookEvent(domain.ProjectWebhookEvent{
+			ID: eventID, ChannelID: ch.ID, ProjectID: ch.ProjectID, Status: domain.WebhookEventRejected,
+			Reason: authReason, ClientIP: clientIP, PayloadBytes: len(raw), ReceivedAt: now,
+		}, "")
+		c.JSON(401, gin.H{"error": "authentication failed"})
 		return
 	}
 
@@ -185,24 +196,24 @@ func (h *webhooksHandlers) inbound(c *gin.Context) {
 		return
 	}
 
-	okAuth, authReason := h.verifyWebhookAuth(ch, c.Request, raw, now)
-	if !okAuth {
-		_ = h.repo.RecordWebhookEvent(domain.ProjectWebhookEvent{
-			ID: eventID, ChannelID: ch.ID, ProjectID: ch.ProjectID, Status: domain.WebhookEventRejected,
-			Reason: authReason, ClientIP: clientIP, PayloadBytes: len(raw), ReceivedAt: now,
-		}, "")
-		c.JSON(401, gin.H{"error": "authentication failed"})
-		return
-	}
-
 	idemKey := strings.TrimSpace(c.GetHeader("Idempotency-Key"))
 	if idemKey != "" {
-		issueID, issueNumber, taskID, runID, responseJSON, hit, err := h.repo.WebhookIdempotencyLookup(ch.ID, idemKey, now)
+		claimed, issueID, issueNumber, taskID, runID, responseJSON, hit, err := h.repo.ClaimWebhookIdempotency(ch.ID, idemKey, now)
 		if err != nil {
+			if errors.Is(err, repo.ErrWebhookIdempotencyPending) {
+				_ = h.repo.RecordWebhookEvent(domain.ProjectWebhookEvent{
+					ID: eventID, ChannelID: ch.ID, ProjectID: ch.ProjectID, Status: domain.WebhookEventRejected,
+					Reason: "idempotency_pending", ClientIP: clientIP, PayloadBytes: len(raw),
+					IdempotencyKeyID: shortKeyID(idemKey), ReceivedAt: now,
+				}, "")
+				c.Header("Retry-After", "1")
+				c.JSON(409, gin.H{"error": "idempotency key is being processed"})
+				return
+			}
 			respond(c, err)
 			return
 		}
-		if hit {
+		if !claimed && hit {
 			_ = h.repo.RecordWebhookEvent(domain.ProjectWebhookEvent{
 				ID: eventID, ChannelID: ch.ID, ProjectID: ch.ProjectID, Status: domain.WebhookEventAccepted,
 				Reason: "idempotent_replay", IssueID: issueID, IssueNumber: issueNumber, TaskID: taskID, RunID: runID,
@@ -265,6 +276,9 @@ func (h *webhooksHandlers) inbound(c *gin.Context) {
 	})
 	if err := h.repo.PutIssue(issue); err != nil {
 		_ = h.repo.UpdateWebhookEvent(eventID, domain.WebhookEventRejected, "issue_create_failed", "", 0, "", "")
+		if idemKey != "" {
+			_ = h.repo.DeleteWebhookIdempotency(ch.ID, idemKey)
+		}
 		respond(c, err)
 		return
 	}
@@ -277,6 +291,8 @@ func (h *webhooksHandlers) inbound(c *gin.Context) {
 	status := domain.WebhookEventAccepted
 	reason := ""
 	var taskID, runID string
+	httpStatus := 201
+	inputExtra := formatWebhookSOPInput(ctxObj)
 
 	if ch.AutoDispatch {
 		wf := strings.TrimSpace(ch.DefaultWorkflowID)
@@ -288,15 +304,16 @@ func (h *webhooksHandlers) inbound(c *gin.Context) {
 				Body: "Auto-dispatch failed: channel has no default SOP/workflow.", CreatedAt: now,
 			})
 			_ = h.repo.UpdateWebhookEvent(eventID, status, reason, issue.ID, issue.Number, "", "")
-			c.JSON(502, gin.H{"error": "issue created but SOP dispatch failed: no default workflow", "issueId": issue.ID, "number": issue.Number, "eventId": eventID})
+			fail := gin.H{"error": "issue created but SOP dispatch failed: no default workflow", "issueId": issue.ID, "number": issue.Number, "eventId": eventID}
+			h.finishWebhookIdempotent(c, ch.ID, idemKey, issue, "", "", fail, 502, now, status, eventID, clientIP)
 			return
 		}
-		inputExtra := formatWebhookSOPInput(ctxObj)
 		task, derr := dispatchIssue(h.deps, dispatchRequest{
 			IssueID: issue.ID, WorkflowID: wf, TriggerOrigin: "webhook",
 			TriggerUserID: ch.AssigneeUserID,
+			ExtraInput:   inputExtra,
 		})
-		// Re-load and append webhook context into a comment for agents; also patch run input via comment.
+		// Keep a durable comment for operators / later manual dispatch context.
 		_ = h.repo.PutComment(domain.IssueComment{
 			ID: "cmt-" + randomID(), IssueID: issue.ID, AuthorType: "system", AuthorID: "webhook",
 			Body: "Webhook SOP input variables:\n\n" + inputExtra, CreatedAt: now,
@@ -310,24 +327,60 @@ func (h *webhooksHandlers) inbound(c *gin.Context) {
 				Body: "Auto-dispatch failed: " + safeWebhookErr(derr), CreatedAt: now,
 			})
 			_ = h.repo.UpdateWebhookEvent(eventID, status, reason, issue.ID, issue.Number, "", "")
-			c.JSON(502, gin.H{"error": "issue created but SOP dispatch failed", "detail": safeWebhookErr(derr), "issueId": issue.ID, "number": issue.Number, "eventId": eventID})
+			fail := gin.H{"error": "issue created but SOP dispatch failed", "detail": safeWebhookErr(derr), "issueId": issue.ID, "number": issue.Number, "eventId": eventID}
+			h.finishWebhookIdempotent(c, ch.ID, idemKey, issue, "", "", fail, 502, now, status, eventID, clientIP)
 			return
 		}
 		taskID, runID = task.ID, task.RunID
 		resp["taskId"] = taskID
 		resp["runId"] = runID
 		status = domain.WebhookEventDispatched
-		// Best-effort: append webhook block onto run input for {{input}} consumers.
+		// Defensive: ExtraInput already went into Start; keep append for older runs.
 		_ = appendWebhookInputToRun(h.deps, runID, inputExtra)
 	}
 
 	_ = h.repo.UpdateWebhookEvent(eventID, status, reason, issue.ID, issue.Number, taskID, runID)
+	h.finishWebhookIdempotent(c, ch.ID, idemKey, issue, taskID, runID, resp, httpStatus, now, status, eventID, clientIP)
+}
+
+// finishWebhookIdempotent records the idempotency mapping (including 502 bodies) then writes the HTTP response.
+func (h *webhooksHandlers) finishWebhookIdempotent(c *gin.Context, channelID, idemKey string, issue domain.Issue, taskID, runID string, resp gin.H, httpStatus int, now time.Time, status, eventID, clientIP string) {
 	body, _ := json.Marshal(resp)
 	if idemKey != "" {
-		_ = h.repo.PutWebhookIdempotency(ch.ID, idemKey, issue.ID, issue.Number, taskID, runID, string(body), now)
+		_ = h.repo.PutWebhookIdempotency(channelID, idemKey, issue.ID, issue.Number, taskID, runID, string(body), now)
 	}
-	logWebhookMeta(status, ch.ID, eventID, issue.ID, issue.Number, clientIP)
-	c.Data(201, "application/json", body)
+	logWebhookMeta(status, channelID, eventID, issue.ID, issue.Number, clientIP)
+	c.Data(httpStatus, "application/json", body)
+}
+
+// webhookExtraInputForIssue reloads filtered webhook context for manual dispatch of webhook-sourced issues.
+func webhookExtraInputForIssue(d *deps, issue domain.Issue) string {
+	if d == nil || d.repo == nil || !strings.EqualFold(strings.TrimSpace(issue.Source), "webhook") {
+		return ""
+	}
+	if issue.ExternalRef == nil {
+		return ""
+	}
+	ext := strings.TrimSpace(issue.ExternalRef.ExternalID)
+	channelID, eventID, ok := strings.Cut(ext, "/")
+	if !ok || strings.TrimSpace(eventID) == "" {
+		return ""
+	}
+	summary, err := d.repo.WebhookEventPayloadSummary(eventID)
+	if err != nil || strings.TrimSpace(summary) == "" {
+		return ""
+	}
+	var ctx domain.WebhookInboundContext
+	if err := json.Unmarshal([]byte(summary), &ctx); err != nil {
+		return ""
+	}
+	if ctx.ChannelID == "" {
+		ctx.ChannelID = channelID
+	}
+	if ctx.EventID == "" {
+		ctx.EventID = eventID
+	}
+	return formatWebhookSOPInput(ctx)
 }
 
 func appendWebhookInputToRun(d *deps, runID, block string) error {

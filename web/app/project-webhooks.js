@@ -242,7 +242,9 @@
   }
 
   function bindProjectWebhooks(root) {
-    root?.addEventListener('click', (ev) => {
+    if (!root || root.dataset.whBound === '1') return;
+    root.dataset.whBound = '1';
+    root.addEventListener('click', (ev) => {
       const t = ev.target.closest('[data-wh-create],[data-wh-edit],[data-wh-events-btn],[data-wh-save],[data-wh-cancel],[data-wh-rotate],[data-wh-delete],[data-wh-hide-reveal],[data-wh-copy]');
       if (!t) return;
       if (t.hasAttribute('data-wh-create')) {

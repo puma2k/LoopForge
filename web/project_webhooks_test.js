@@ -22,6 +22,7 @@ test("project-webhooks.js exports panel helpers", () => {
   assert.match(src, /window\.projectWebhooksPanelHTML/);
   assert.match(src, /rotate-secret/);
   assert.match(src, /Idempotency|HMAC|authMode/);
+  assert.match(src, /dataset\.whBound/);
 });
 
 test("index.html loads project-webhooks.js", () => {

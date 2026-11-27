@@ -444,6 +444,9 @@ func (r *WebhooksRepo) ClaimWebhookNonceStrict(channelID, nonce string, now time
 	return nil
 }
 
+// ErrWebhookIdempotencyPending means another request holds the key but has not finished yet.
+var ErrWebhookIdempotencyPending = errors.New("webhook idempotency key pending")
+
 // WebhookIdempotencyLookup returns a prior response for the same key if still valid.
 func (r *WebhooksRepo) WebhookIdempotencyLookup(channelID, key string, now time.Time) (issueID string, issueNumber int, taskID, runID, responseJSON string, ok bool, err error) {
 	key = strings.TrimSpace(key)
@@ -462,7 +465,43 @@ func (r *WebhooksRepo) WebhookIdempotencyLookup(channelID, key string, now time.
 	return row.IssueID, row.IssueNumber, row.TaskID, row.RunID, row.ResponseJSON, true, nil
 }
 
-// PutWebhookIdempotency stores the response for a key.
+// ClaimWebhookIdempotency inserts a pending row for the key. claimed=true means this
+// caller owns creation. claimed=false with ok=true returns the winner's completed
+// response (waits briefly if still pending).
+func (r *WebhooksRepo) ClaimWebhookIdempotency(channelID, key string, now time.Time) (claimed bool, issueID string, issueNumber int, taskID, runID, responseJSON string, ok bool, err error) {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return true, "", 0, "", "", "", false, nil
+	}
+	_ = r.DB.Where("expires_at < ?", now).Delete(&projectWebhookIdempotencyRow{}).Error
+	row := projectWebhookIdempotencyRow{
+		ChannelID: channelID, KeyHash: hexSHA256(key), ExpiresAt: now.Add(domain.WebhookIdempotencyTTL),
+	}
+	res := r.DB.Clauses(clause.OnConflict{DoNothing: true}).Create(&row)
+	if res.Error != nil {
+		return false, "", 0, "", "", "", false, res.Error
+	}
+	if res.RowsAffected == 1 {
+		return true, "", 0, "", "", "", false, nil
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		var existing projectWebhookIdempotencyRow
+		q := r.DB.Where("channel_id = ? AND key_hash = ?", channelID, hexSHA256(key)).Limit(1).Find(&existing)
+		if q.Error != nil {
+			return false, "", 0, "", "", "", false, q.Error
+		}
+		if existing.IssueID != "" {
+			return false, existing.IssueID, existing.IssueNumber, existing.TaskID, existing.RunID, existing.ResponseJSON, true, nil
+		}
+		if time.Now().After(deadline) {
+			return false, "", 0, "", "", "", false, ErrWebhookIdempotencyPending
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+// PutWebhookIdempotency stores (or completes) the response for a key.
 func (r *WebhooksRepo) PutWebhookIdempotency(channelID, key, issueID string, issueNumber int, taskID, runID, responseJSON string, now time.Time) error {
 	key = strings.TrimSpace(key)
 	if key == "" {
@@ -476,6 +515,15 @@ func (r *WebhooksRepo) PutWebhookIdempotency(channelID, key, issueID string, iss
 		Columns:   []clause.Column{{Name: "channel_id"}, {Name: "key_hash"}},
 		DoUpdates: clause.AssignmentColumns([]string{"issue_id", "issue_number", "task_id", "run_id", "response_json", "expires_at"}),
 	}).Create(&row).Error
+}
+
+// DeleteWebhookIdempotency drops a pending/completed key so a failed create can retry.
+func (r *WebhooksRepo) DeleteWebhookIdempotency(channelID, key string) error {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return nil
+	}
+	return r.DB.Where("channel_id = ? AND key_hash = ?", channelID, hexSHA256(key)).Delete(&projectWebhookIdempotencyRow{}).Error
 }
 
 // RecordWebhookEvent appends an audit event (never store secrets).

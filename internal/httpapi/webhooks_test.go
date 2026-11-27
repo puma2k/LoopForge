@@ -102,11 +102,14 @@ func TestProjectInboundWebhooks(t *testing.T) {
 		"X-LoopForge-Timestamp": ts, "X-LoopForge-Nonce": "n-bad2",
 		"X-LoopForge-Signature": sign("wrong", body),
 	}, body, 401)
-	post(map[string]string{
+	expired := post(map[string]string{
 		"X-LoopForge-Timestamp": fmt.Sprintf("%d", time.Now().Add(-20*time.Minute).Unix()),
 		"X-LoopForge-Nonce":     "n-old",
 		"X-LoopForge-Signature": sign(res.Secret, body),
 	}, body, 401)
+	if !strings.Contains(expired.Body.String(), "timestamp_expired") && !strings.Contains(expired.Body.String(), "timestamp outside") {
+		t.Fatalf("want timestamp_expired, got %s", expired.Body.String())
+	}
 
 	rec := post(good, body, 201)
 	var first map[string]any
@@ -207,16 +210,18 @@ func TestProjectInboundWebhooks(t *testing.T) {
 		t.Fatal("delivery token leaked in events")
 	}
 
-	// Auto-dispatch without workflow -> 502 but issue kept.
+	// Auto-dispatch without workflow -> 502 but issue kept; idempotency still binds.
 	ad := requestJSONAuthed[created](t, h, owner, "POST", "/api/projects/wh-project/webhooks", map[string]any{
 		"name": "auto bad", "authMode": "hmac", "autoDispatch": true, "defaultWorkflowId": "",
 	}, 201)
 	adBody := []byte(`{"title":"auto"}`)
-	adReq := httptest.NewRequest("POST", "/api/webhooks/inbound/"+ad.DeliveryToken, bytes.NewReader(adBody))
+	adPath := "/api/webhooks/inbound/" + ad.DeliveryToken
+	adReq := httptest.NewRequest("POST", adPath, bytes.NewReader(adBody))
 	adReq.Header.Set("Content-Type", "application/json")
 	adReq.Header.Set("X-LoopForge-Timestamp", fmt.Sprintf("%d", time.Now().Unix()))
 	adReq.Header.Set("X-LoopForge-Nonce", "auto-nonce")
 	adReq.Header.Set("X-LoopForge-Signature", sign(ad.Secret, adBody))
+	adReq.Header.Set("Idempotency-Key", "idem-502")
 	adRec := httptest.NewRecorder()
 	h.ServeHTTP(adRec, adReq)
 	if adRec.Code != 502 {
@@ -224,11 +229,82 @@ func TestProjectInboundWebhooks(t *testing.T) {
 	}
 	var adResp map[string]any
 	_ = json.Unmarshal(adRec.Body.Bytes(), &adResp)
-	if adResp["issueId"] == nil || adResp["issueId"] == "" {
+	adIssue, _ := adResp["issueId"].(string)
+	if adIssue == "" {
 		t.Fatalf("issue should still be created: %s", adRec.Body.String())
 	}
 	if strings.Contains(adRec.Body.String(), ad.Secret) {
 		t.Fatal("secret in error response")
+	}
+	adRetry := httptest.NewRequest("POST", adPath, bytes.NewReader(adBody))
+	adRetry.Header.Set("Content-Type", "application/json")
+	adRetry.Header.Set("X-LoopForge-Timestamp", fmt.Sprintf("%d", time.Now().Unix()))
+	adRetry.Header.Set("X-LoopForge-Nonce", "auto-nonce-2")
+	adRetry.Header.Set("X-LoopForge-Signature", sign(ad.Secret, adBody))
+	adRetry.Header.Set("Idempotency-Key", "idem-502")
+	adRetryRec := httptest.NewRecorder()
+	h.ServeHTTP(adRetryRec, adRetry)
+	if adRetryRec.Code != 200 {
+		t.Fatalf("502 idempotency retry want 200 got %d %s", adRetryRec.Code, adRetryRec.Body.String())
+	}
+	var adRetryResp map[string]any
+	_ = json.Unmarshal(adRetryRec.Body.Bytes(), &adRetryResp)
+	if adRetryResp["issueId"] != adIssue {
+		t.Fatalf("502 idempotency created duplicate: %v vs %s", adRetryResp, adIssue)
+	}
+}
+
+func TestWebhookInboundRateLimitHTTP(t *testing.T) {
+	t.Setenv("AGENTFLOW_AUTH_REQUIRED", "true")
+	t.Setenv("AGENTFLOW_SESSION_SECRET", "webhook-rl-secret")
+	t.Setenv("AGENTFLOW_SCHEDULER_ENABLED", "false")
+	s, err := repo.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(s.Close)
+	if err := s.PutUser(domain.User{LoginName: "wh-rl"}); err != nil {
+		t.Fatal(err)
+	}
+	owner, _ := s.UserByLoginName("wh-rl")
+	if err := s.PutProject(domain.Project{ID: "wh-rl", Name: "RL", OwnerID: owner.ID}); err != nil {
+		t.Fatal(err)
+	}
+	h := New(s, engine.New(s, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces"))), tracker.NewService(), "", "")
+	type created struct {
+		DeliveryToken string `json:"deliveryToken"`
+		Secret        string `json:"secret"`
+	}
+	res := requestJSONAuthed[created](t, h, owner, "POST", "/api/projects/wh-rl/webhooks", map[string]any{
+		"name": "rl", "authMode": "hmac",
+	}, 201)
+	sign := func(secret string, payload []byte) string {
+		mac := hmac.New(sha256.New, []byte(secret))
+		mac.Write(payload)
+		return "sha256=" + hex.EncodeToString(mac.Sum(nil))
+	}
+	body := []byte(`{"title":"rl"}`)
+	path := "/api/webhooks/inbound/" + res.DeliveryToken
+	// Exhaust per-channel budget (rate limit runs before auth/body parse).
+	var limited *httptest.ResponseRecorder
+	for i := 0; i < webhookRateChannelLimit+1; i++ {
+		req := httptest.NewRequest("POST", path, bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-LoopForge-Timestamp", fmt.Sprintf("%d", time.Now().Unix()))
+		req.Header.Set("X-LoopForge-Nonce", fmt.Sprintf("rl-%d", i))
+		req.Header.Set("X-LoopForge-Signature", sign(res.Secret, body))
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code == 429 {
+			limited = rec
+			break
+		}
+	}
+	if limited == nil {
+		t.Fatal("expected HTTP 429 after channel rate budget")
+	}
+	if limited.Header().Get("Retry-After") == "" {
+		t.Fatalf("missing Retry-After: %#v", limited.Header())
 	}
 }
 

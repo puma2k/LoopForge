@@ -19,6 +19,10 @@ type dispatchRequest struct {
 	WorkspaceRunID                                    string
 	Rerun                                             bool
 	TriggerUserID                                     int64
+	// ExtraInput is appended to the engine Start input before the run begins
+	// (e.g. webhook.payload / webhook.headers blocks). Prefer this over
+	// patching the run after Start.
+	ExtraInput string
 	// ChatOrigin is the IM conversation the start was requested in; the
 	// run's progress goes back there.
 	ChatOrigin *domain.BotChatOrigin
@@ -188,6 +192,13 @@ func dispatchIssue(d *deps, req dispatchRequest) (domain.Task, error) {
 		input += "\n- SOP deliverables (fix-plan.md and other reports not tied to one repository) go to the workspace root, never inside a repository directory\n- do not write to any host absolute path"
 	}
 	input = appendSOPHandoff(issue, project, workflowID, input)
+	extra := strings.TrimSpace(req.ExtraInput)
+	if extra == "" {
+		extra = webhookExtraInputForIssue(d, issue)
+	}
+	if extra != "" && !strings.Contains(input, "webhook.payload") {
+		input += "\n\n" + extra
+	}
 	taskID, dispatchMode := primaryTaskID(issue.ID, workflowID), "primary"
 	if scheduled {
 		dispatchMode = "scheduled"
