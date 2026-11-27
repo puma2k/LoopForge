@@ -140,7 +140,7 @@
       if (han >= 1 && lit.trim().length >= 2) return true;
       return /[A-Za-z]{2,}/.test(lit) && lit.trim().length >= 3;
     })
-    .sort((a, b) => b.length - a.length);
+    .sort((a, b) => b.length - a.length || a.split('%s').length - b.split('%s').length);
   const printfPatterns = printfKeys.map(k => {
     const parts = k.split('%s');
     let reSrc = '^';

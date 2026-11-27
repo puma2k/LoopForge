@@ -711,6 +711,16 @@ function catalogVisible(projectId,shared){return catalogOwned(projectId)||catalo
 function isPlatformAdmin(){return !!(state.currentUser&&!state.currentUser.isGuest&&state.currentUser.isPlatformAdmin)}
 function canEditGeneric(wf){return catalogGeneric(wf)&&isPlatformAdmin()}
 function catalogGeneric(item){return !!item?.generic}
+/** Exact dictionary label for seed/generic catalog copy (no fragment rewrite). */
+function catalogUiText(text){
+  const s=String(text??'');
+  if(!s)return s;
+  const lang=typeof lfLang==='function'?lfLang():(document.documentElement.dataset.lang==='en'?'en':'vi');
+  const dict=lang==='en'?window.LF_I18N_EN:window.LF_I18N_VI;
+  const hit=dict&&dict[s];
+  if(typeof hit==='string'&&hit&&!/[\u3400-\u9fff]/.test(hit))return hit;
+  return s;
+}
 // Generic roles live in generic_templates, but the first project that
 // adopted a template often reused the same role id. Looking the wizard
 // subject up in the project catalog then marks that role as foreign and

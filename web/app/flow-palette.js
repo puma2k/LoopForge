@@ -67,7 +67,7 @@ const flowPalette=(()=>{
   function render(){
     const host=document.getElementById('flowPaletteRoles');if(!host)return;
     const input=document.getElementById('flowPaletteQ'),raw=(input?.value||'').trim(),q=raw.toLowerCase();
-    const roles=workflowAgents().map(a=>({id:a.id,name:a.name||a.id,desc:roleDesc(a)})).filter(r=>matches(q,r.name,r.desc));
+    const roles=workflowAgents().map(a=>({id:a.id,name:catalogGeneric(state.workflow)?catalogUiText(a.name||a.id):(a.name||a.id),desc:roleDesc(a)})).filter(r=>matches(q,r.name,r.desc));
     const all=workflowAgents().length;
     host.innerHTML=roles.map(r=>`<div class="fd-pal-item" role="button" tabindex="0" draggable="true" data-add="agent" data-agent-id="${escapeHTML(r.id)}" data-tip="${escapeHTML(r.name)}"><span class="fd-tile" style="--tint:${roleTint(r.id)}">${escapeHTML(initial(r.name))}</span><div class="fd-pal-text"><b>${escapeHTML(r.name)}</b><small>${escapeHTML(r.desc)}</small></div><span class="fd-grip">${icon('grip',14)}</span></div>`).join('')
       ||(!q&&!all?`<div class="fd-pal-none">${state.workflow?'这个项目还没有角色':'先选择一条 SOP'}${state.workflow&&!catalogGeneric(state.workflow)?'<button type="button" class="fd-link" data-pal-agents>去角色定义</button>':''}</div>`:'');
