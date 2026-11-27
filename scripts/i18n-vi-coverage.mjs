@@ -805,7 +805,7 @@ export function createTranslator(dict) {
       if (han >= 1 && lit.trim().length >= 2) return true;
       return /[A-Za-z]{2,}/.test(lit) && lit.trim().length >= 3;
     })
-    .sort((a, b) => b.length - a.length);
+    .sort((a, b) => b.length - a.length || a.split("%s").length - b.split("%s").length);
   const printfPatterns = printfKeys.map((k) => {
     const parts = k.split("%s");
     let reSrc = "^";
@@ -1049,6 +1049,17 @@ export function extractDisplayStrings(src, { isHtml = false, isJsx = false } = {
       push(text, index, kind);
       for (const run of extractFragmentHanRuns(text)) {
         push(run, index, `${kind}-han-run`);
+      }
+      // Attr-only JS literals (e.g. ' title="请在…API Key"') are not looksLikeHtml
+      // but runtime sets the bare DOM value — extract and check that too.
+      const attrProbe = new RegExp(`(?:${ATTR_NAMES})\\s*=`);
+      if (attrProbe.test(raw) || attrProbe.test(text)) {
+        for (const p of extractFromHtml(raw)) {
+          push(p.text, index, `js-attr-${p.kind}`);
+          for (const run of extractFragmentHanRuns(p.text)) {
+            push(run, index, `js-attr-${p.kind}-han-run`);
+          }
+        }
       }
       if (sample) {
         for (const filled of sampleFillsForPiece(text)) {

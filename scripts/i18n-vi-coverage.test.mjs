@@ -63,6 +63,35 @@ describe("extractFromHtml", () => {
   });
 });
 
+describe("js attr-only literals (title=/aria-label=)", () => {
+  it("extracts bare DOM attr values from title=\"…\" JS strings", () => {
+    const src = `const title=missing?' title="请在个人配置中填写 API Key"':'';`;
+    const parts = extractDisplayStrings(src);
+    const texts = new Set(parts.map((p) => p.text));
+    assert.ok(
+      texts.has("请在个人配置中填写 API Key"),
+      `expected bare attr value, got ${JSON.stringify([...texts])}`,
+    );
+  });
+
+  it("fails coverage when only the title=\"…\" wrapper key exists", () => {
+    const dict = {
+      'title="请在个人配置中填写 API Key"':
+        'title="Vui lòng điền API Key trong Cài đặt cá nhân"',
+    };
+    const { translate } = createTranslator(dict);
+    assert.equal(
+      isFullyTranslated('title="请在个人配置中填写 API Key"', translate),
+      true,
+    );
+    assert.equal(
+      isFullyTranslated("请在个人配置中填写 API Key", translate),
+      false,
+      "bare DOM title must not be covered by the wrapped title=\"…\" key alone",
+    );
+  });
+});
+
 describe("normalizePlaceholders", () => {
   it("collapses ${…} / {x} / {{x}}", () => {
     assert.equal(normalizePlaceholders("共 ${n} 条"), "共 %s 条");
