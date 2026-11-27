@@ -1,0 +1,128 @@
+#!/usr/bin/env node
+/**
+ * Unit tests for i18n-vi-coverage extraction + translation simulation.
+ * Run: node --test scripts/i18n-vi-coverage.test.mjs
+ */
+import { describe, it } from "node:test";
+import assert from "node:assert/strict";
+import {
+  createTranslator,
+  extractDisplayStrings,
+  extractFromHtml,
+  extractQuotedStrings,
+  isFullyTranslated,
+  normalizePlaceholders,
+  stripComments,
+} from "./i18n-vi-coverage.mjs";
+
+describe("stripComments", () => {
+  it("removes line and block comments but keeps string bodies", () => {
+    const src = `
+      // 中文注释
+      const a = "可见中文";
+      /* 块注释中文 */
+      const b = '也可见';
+    `;
+    const out = stripComments(src);
+    assert.equal(out.includes("中文注释"), false);
+    assert.equal(out.includes("块注释中文"), false);
+    assert.equal(out.includes("可见中文"), true);
+    assert.equal(out.includes("也可见"), true);
+  });
+});
+
+describe("extractQuotedStrings", () => {
+  it("finds Chinese in quotes and templates", () => {
+    const src = `
+      const a = "保存成功";
+      const b = \`共 \${n} 条\`;
+      console.log("调试中文");
+    `;
+    const found = extractQuotedStrings(stripComments(src));
+    const texts = found.map((f) => f.raw);
+    assert.ok(texts.some((t) => t.includes("保存成功")));
+    assert.ok(texts.some((t) => t.includes("共") && t.includes("条")));
+    assert.equal(
+      texts.some((t) => t.includes("调试中文")),
+      false,
+      "console.log should be skipped",
+    );
+  });
+});
+
+describe("extractFromHtml", () => {
+  it("pulls text nodes and aria/title attrs", () => {
+    const html = `<button title="关闭" aria-label="搜索模型">保存</button>`;
+    const parts = extractFromHtml(html).map((p) => p.text);
+    assert.deepEqual(new Set(parts), new Set(["关闭", "搜索模型", "保存"]));
+  });
+});
+
+describe("normalizePlaceholders", () => {
+  it("collapses ${…} / {x} / {{x}}", () => {
+    assert.equal(normalizePlaceholders("共 ${n} 条"), "共 %s 条");
+    assert.equal(normalizePlaceholders("你好 {name}"), "你好 %s");
+    assert.equal(normalizePlaceholders("标题 {{issue.title}}"), "标题 %s");
+  });
+});
+
+describe("createTranslator + isFullyTranslated", () => {
+  const dict = {
+    保存: "Lưu",
+    保存成功: "Đã lưu",
+    关闭: "Đóng",
+    共: "Tổng",
+    条: "",
+    无法加载工作区执行机器: "Không thể tải máy thực thi của workspace",
+  };
+  const { translate } = createTranslator(dict);
+
+  it("exact key hits", () => {
+    assert.equal(translate("保存成功"), "Đã lưu");
+    assert.equal(isFullyTranslated("保存成功", translate), true);
+  });
+
+  it("fragment coverage for composites", () => {
+    // 关闭 has only 2 Han → exact match only (still covered).
+    assert.equal(isFullyTranslated("关闭", translate), true);
+    // Longer key (≥3 Han) applies as a fragment when embedded with ASCII only around it.
+    assert.equal(isFullyTranslated("[retry] 无法加载工作区执行机器", translate), true);
+  });
+
+  it("reports uncovered Chinese", () => {
+    assert.equal(isFullyTranslated("尚未翻译的句子啊", translate), false);
+  });
+
+  it("covers placeholder-normalized templates when fragments exist", () => {
+    // exact "共 %s 条" not in dict; fragments 共 (≥1 but need ≥3 Han — 共 is 1)
+    // So this may still be uncovered unless whole string in dict — document behavior.
+    const t = "共 %s 条";
+    // 共 and 条 are short; without dict entry stays Han → uncovered is OK for test of negative path
+    // Add a full key:
+    const dict2 = { ...dict, "共 %s 条": "Tổng %s mục" };
+    const { translate: tr2 } = createTranslator(dict2);
+    assert.equal(isFullyTranslated(t, tr2), true);
+  });
+});
+
+describe("extractDisplayStrings integration", () => {
+  it("splits HTML-in-JS templates into display pieces", () => {
+    const src = `
+      root.innerHTML = \`<div class="x" title="关闭"><b>保存成功</b><p>尚未翻译的句子啊</p></div>\`;
+    `;
+    const parts = extractDisplayStrings(src, { isHtml: false });
+    const texts = parts.map((p) => p.text);
+    assert.ok(texts.includes("关闭"));
+    assert.ok(texts.includes("保存成功"));
+    assert.ok(texts.includes("尚未翻译的句子啊"));
+  });
+
+  it("reads HTML file text and attrs", () => {
+    const html = `<!doctype html><title>工作台</title><button aria-label="全局导航">进入</button>`;
+    const parts = extractDisplayStrings(html, { isHtml: true });
+    const texts = new Set(parts.map((p) => p.text));
+    assert.ok(texts.has("工作台") || [...texts].some((t) => t.includes("工作台")));
+    assert.ok(texts.has("全局导航"));
+    assert.ok(texts.has("进入"));
+  });
+});

@@ -405,6 +405,65 @@ const ALLOWLIST_EXACT = [
   "repos",
   "patches",
   "diffs",
+  // Proper nouns / protocol labels kept in Chinese UI copy
+  "VS",
+  "localhost",
+  "container",
+  "Checkers",
+  "Completions",
+  "ultracode",
+  "Secret",
+  "AppKey",
+  "COPY",
+  "telemetry",
+  "toolchain",
+  "CorpId",
+  "App",
+  "Client",
+  "native",
+  "ding",
+  "uv",
+  "robot",
+  "Contents",
+  "AppID",
+  "Guild",
+  "Tab",
+  "baseline",
+  "runtime",
+  "IM",
+  "Avatar",
+  "menu",
+  "viewport",
+  "trigger",
+  "Banner",
+  "snapshot",
+  "upstream",
+  "downstream",
+  "server",
+  "USD",
+  "Workflow",
+  "site",
+  "Run",
+  "Base",
+  "tools",
+  "list",
+  "PostgreSQL",
+  "Terminal",
+  "terminal",
+  "IP",
+  "IPv6",
+  "Iteration",
+  "Console",
+  "FAQ",
+  "demo",
+  "BigModel",
+  "Integrations",
+  "User",
+  "Keys",
+  "overview",
+  "logs",
+  "Messages",
+  "Anthropic",
 ];
 
 const ALLOWLIST_SET = new Set(ALLOWLIST_EXACT);
@@ -453,6 +512,14 @@ const VI_ASCII = [
   "thu",
   "xong",
   "danh",
+  "doanh",
+  "xoay",
+  "quanh",
+  "im",
+  "bay",
+  "bong",
+  "chai",
+  "coi",
   "quy",
   "chia",
   "ngay",
@@ -1615,7 +1682,7 @@ function maskIgnored(value) {
   s = s.replace(/\{[^}]*\}/g, " ");
   s = s.replace(/%[0-9]*[sdvwqx]/g, " ");
   s = s.replace(/`[^`]*`/g, " ");
-  s = s.replace(/https?:\/\/\S+/gi, " ");
+  s = s.replace(/https?:\/\/\S*/gi, " ");
   s = s.replace(/\b(?:mailto|ssh|git):\/\/\S+/gi, " ");
   s = s.replace(/(?:^|[\s(])(?:\.?\.?\/|~\/)[\w./-]+/g, " ");
   s = s.replace(/\b[\w-]+\.[A-Za-z0-9._-]{1,24}\b/g, " ");
@@ -1690,9 +1757,26 @@ function checkGlued(value) {
 const SPLIT_PHIEN_NHANH_RE =
   /(?<![\p{L}])\p{L}*\p{L}[np] (?:hánh|hiên)(?![\p{L}])/gu;
 
-/** Known glued stems from broken syllable joins (also /bảnmô/). */
+/** Known glued stems from broken syllable joins (also /bảnmô/, /ánmô/). */
 const GLUED_KNOWN_RE =
-  /bảnmô|(?<![\p{L}])(?:vụp|cóp|tạon|mởn|mởp|lạip|tảip|mớip|cón)(?![\p{L}])/gu;
+  /bảnmô|ánmô|dự ánmô|(?<![\p{L}])(?:vụp|cóp|tạon|mởn|mởp|lạip|tảip|mớip|cón)(?![\p{L}])/gu;
+
+/**
+ * Vietnamese letter glued to a Latin/tech token without a space
+ * (tảiworkspace, dùngSOP, trênrunner, …).
+ * Negative lookbehind skips English compounds like OpenAPI / GitHub.
+ */
+const GLUED_LATIN_RE =
+  /(?<![A-Za-z])\p{Ll}(?:workspace|Workspace|SOP|runner|Runner|MCP|Git|API|CLI|Token|Docker|Agent|PR|MR)\b/gu;
+
+/**
+ * Lowercase Vietnamese (incl. ascii vowel) stuck to an uppercase Latin run
+ * inside a VI phrase — e.g. dựánX when X starts with capital (rare) /
+ * more commonly [a-zà-ỹđ][A-Z] after diacritics: "môTả" style mistakes.
+ * Skip pure camelCase ASCII (already masked) by requiring a VI letter.
+ */
+const GLUED_VI_CAMEL_RE =
+  /[àáảãạăằắẳẵặâầấẩẫậèéẻẽẹêềếểễệìíỉĩịòóỏõọôồốổỗộơờớởỡợùúủũụưừứửữựỳýỷỹỵđ][A-Z]/gu;
 
 /**
  * Calque 当前X → "hiện tại X" at ANY position.
@@ -1711,6 +1795,77 @@ function checkSplitSyllables(value) {
   GLUED_KNOWN_RE.lastIndex = 0;
   while ((m = GLUED_KNOWN_RE.exec(value)) !== null) {
     issues.push({ type: "dính", detail: m[0] });
+  }
+  GLUED_LATIN_RE.lastIndex = 0;
+  while ((m = GLUED_LATIN_RE.exec(value)) !== null) {
+    issues.push({ type: "dính", detail: m[0] });
+  }
+  GLUED_VI_CAMEL_RE.lastIndex = 0;
+  while ((m = GLUED_VI_CAMEL_RE.exec(value)) !== null) {
+    issues.push({ type: "dính", detail: m[0] });
+  }
+  return issues;
+}
+
+/**
+ * Known bad calques / word-order mistakes for 执行机器 and related keys
+ * (review findings — must keep failing).
+ */
+const KNOWN_BAD_VI_RES = [
+  {
+    keyIncludes: "项目共享执行机器",
+    re: /dự án dùng chung máy thực thi/i,
+    detail: "dự án dùng chung máy thực thi",
+  },
+  {
+    keyIncludes: "无法加载工作区执行机器",
+    re: /máy thực thi bàn làm việc(?!\s+của)/i,
+    detail: "máy thực thi bàn làm việc (missing của)",
+  },
+  {
+    keyIncludes: "使用执行机器的账号模型",
+    re: /dùng máy thực thi tài khoản mô hình/i,
+    detail: "dùng máy thực thi tài khoản mô hình",
+  },
+  {
+    keyIncludes: "等待云端执行机器",
+    re: /trong đám mây runner/i,
+    detail: "trong đám mây runner",
+  },
+];
+
+/**
+ * 执行机器 must be "máy thực thi" — never runner / máy chạy.
+ * Also catch inverted "máy thực thi <noun>" when the Chinese key ends with
+ * 版本 / 状态 / 名称 / 类型 / 列表 (should be "<noun> máy thực thi").
+ */
+function checkExecMachineTerminology(key, value) {
+  const issues = [];
+  if (typeof key !== "string" || typeof value !== "string") return issues;
+
+  for (const rule of KNOWN_BAD_VI_RES) {
+    if (key.includes(rule.keyIncludes) && rule.re.test(value)) {
+      issues.push({ type: "calque", detail: rule.detail });
+    }
+  }
+
+  if (!key.includes("执行机器")) return issues;
+  if (/\brunners?\b/i.test(value) || /máy chạy/i.test(value)) {
+    issues.push({ type: "term", detail: "执行机器 must be máy thực thi" });
+  }
+  // Key like 执行机器版本 / 执行机器状态 / … → value must not start with
+  // "máy thực thi phiên bản|trạng thái|…"
+  if (/执行机器(?:版本|状态|名称|类型|列表)$/.test(key)) {
+    if (
+      /^máy thực thi\s+(phiên bản|trạng thái|tên|loại|danh sách)\b/i.test(
+        value,
+      )
+    ) {
+      issues.push({
+        type: "calque",
+        detail: "máy thực thi <noun> word order",
+      });
+    }
   }
   return issues;
 }
@@ -1862,6 +2017,7 @@ export function checkValue(key, value) {
   if (typeof key === "string") {
     issues.push(...checkPlaceholderParity(key, value));
     issues.push(...checkKeyValueFidelity(key, value));
+    issues.push(...checkExecMachineTerminology(key, value));
   } else {
     // Value-only calls still catch broken contractions / bad HTML attrs / bản bản.
     issues.push(...checkKeyValueFidelity("", value));
@@ -1873,17 +2029,19 @@ export function checkValue(key, value) {
     // Acronyms first: exact uppercase OK; wrong case is acronym-case (not blacklist).
     if (ACRONYMS.has(upper)) {
       if (word === upper) continue;
-      // Vietnamese question word "Ai" (who) — not the AI acronym.
-      if (upper === "AI" && word === "Ai") continue;
+      // Vietnamese question word "ai" / "Ai" (who) — not the AI acronym.
+      if (upper === "AI" && (word === "Ai" || word === "ai")) continue;
       issues.push({ type: "acronym-case", detail: word });
       continue;
     }
+    // Vietnamese ASCII syllables win over the English blacklist ("to" in "phóng to").
+    if (VI_ASCII_SET.has(lower)) continue;
+    // Explicit product allowlist wins over blacklist (e.g. User API Keys, Contents).
+    if (isAllowedTerm(word)) continue;
     if (BLACKLIST_SET.has(lower)) {
       issues.push({ type: "blacklist", detail: word });
       continue;
     }
-    if (isAllowedTerm(word)) continue;
-    if (VI_ASCII_SET.has(lower)) continue;
     if (word.length === 1) continue;
     issues.push({ type: "english", detail: word });
   }

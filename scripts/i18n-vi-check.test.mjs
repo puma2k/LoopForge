@@ -202,6 +202,44 @@ describe("i18n-vi-check must-fail cases (review findings)", () => {
     );
   });
 
+  it("catches mục 3 bad VI values (dính / máy thực thi)", () => {
+    const bad = [
+      ["项目共享执行机器", "dự án dùng chung máy thực thi"],
+      ["无法加载工作区执行机器", "Không thể tải máy thực thi bàn làm việc"],
+      ["使用执行机器的账号模型", "dùng máy thực thi tài khoản mô hình"],
+      ["执行机器版本", "máy thực thi phiên bản"],
+      ["等待云端执行机器", "Đang chờ trong đám mây runner"],
+      ["暂无项目说明", "chưa có dự ánmô tả"],
+    ];
+    for (const [key, v] of bad) {
+      const issues = checkValue(key, v);
+      assert.ok(
+        issues.length > 0,
+        `expected issues for ${JSON.stringify(v)}: ${JSON.stringify(issues)}`,
+      );
+    }
+  });
+
+  it("catches VI letter glued to latin tech token", () => {
+    for (const v of ["tảiworkspace", "dùngSOP", "trênrunner", "mởGit"]) {
+      const issues = checkValue("x", v);
+      assert.ok(
+        hasType(issues, "dính"),
+        `expected dính in ${v}: ${JSON.stringify(issues)}`,
+      );
+    }
+  });
+
+  it("catches runner/máy chạy when key has 执行机器", () => {
+    for (const v of ["Gỡ runner", "Cấu hình runner", "Dùng máy chạy"]) {
+      const issues = checkValue("移除执行机器", v);
+      assert.ok(
+        hasType(issues, "term"),
+        `expected term in ${v}: ${JSON.stringify(issues)}`,
+      );
+    }
+  });
+
   it("catches thể hiện mistranslation when key contains 实例", () => {
     const cases = [
       [
@@ -331,6 +369,25 @@ describe("i18n-vi-check must-pass cases", () => {
       ['" title="打开运行', '" title="Mở lần chạy'],
       ["预览构建", "Xem trước bản dựng"],
       ["这个会话还没有工作区。", "Phiên này chưa có bàn làm việc."],
+    ];
+    for (const [key, value] of good) {
+      const issues = checkValue(key, value);
+      assert.deepEqual(
+        issues,
+        [],
+        `unexpected issues for ${value}: ${JSON.stringify(issues)}`,
+      );
+    }
+  });
+
+  it("passes mục 3 suggested máy thực thi / grammar fixes", () => {
+    const good = [
+      ["项目共享执行机器", "Máy thực thi dùng chung của dự án"],
+      ["无法加载工作区执行机器", "Không thể tải máy thực thi của bàn làm việc"],
+      ["使用执行机器的账号模型", "Dùng mô hình theo tài khoản trên máy thực thi"],
+      ["执行机器版本", "Phiên bản máy thực thi"],
+      ["等待云端执行机器", "Đang chờ máy thực thi trên đám mây"],
+      ["暂无项目说明", "Chưa có mô tả dự án"],
     ];
     for (const [key, value] of good) {
       const issues = checkValue(key, value);
