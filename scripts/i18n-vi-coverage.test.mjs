@@ -152,11 +152,19 @@ describe("createTranslator + isFullyTranslated", () => {
 });
 
 describe("icon/spinner chrome empty-fill", () => {
-  it("detects huiIcon / spinner / glyph exprs", () => {
+  it("detects *Icon / spinner / glyph / ic / icon exprs", () => {
     assert.equal(isIconChromeExpr("huiIcon('lock')"), true);
+    assert.equal(isIconChromeExpr("botIcon('plus')"), true);
+    assert.equal(isIconChromeExpr("pcIcon('folder')"), true);
+    assert.equal(isIconChromeExpr("obsIcon('trace')"), true);
     assert.equal(isIconChromeExpr("credentialSpinner(13)"), true);
     assert.equal(isIconChromeExpr("credentialGlyph('lock',13)"), true);
+    assert.equal(isIconChromeExpr("skillhubLamp('ok')"), true);
+    assert.equal(isIconChromeExpr("icon('history')"), true);
+    assert.equal(isIconChromeExpr("ic('pencil')"), true);
+    assert.equal(isIconChromeExpr("flowPalette.icon('x',12)"), true);
     assert.equal(isIconChromeExpr("escapeHTML(kind)"), false);
+    assert.equal(isIconChromeExpr("statusText(status)"), false);
   });
 
   it("emptyFillIconChrome strips chrome holes only", () => {
@@ -172,12 +180,39 @@ describe("icon/spinner chrome empty-fill", () => {
       emptyFillIconChrome("${huiIcon('plus')}创建${escapeHTML(kind)}"),
       "创建${escapeHTML(kind)}",
     );
+    assert.equal(
+      emptyFillIconChrome("${botIcon('plus')}开始添加"),
+      "开始添加",
+    );
+    assert.equal(
+      emptyFillIconChrome("${ic('pencil')}编辑属性"),
+      "编辑属性",
+    );
+    assert.equal(
+      emptyFillIconChrome("${icon('history')}旧版会话"),
+      "旧版会话",
+    );
   });
 
   it("sampleFillsForPiece empty-fills leading %s+Han only with iconPrefix", () => {
     assert.deepEqual(
       sampleFillsForPiece("%s只读 · 可直接在本项目使用", { iconPrefix: true }),
       ["只读 · 可直接在本项目使用"],
+    );
+    assert.deepEqual(
+      sampleFillsForPiece("%s 打开代码编辑器编写脚本", { iconPrefix: true }),
+      [],
+      "spaced hole is not per-piece empty-filled (emptyFillIconChrome handles it)",
+    );
+    assert.deepEqual(
+      sampleFillsForPiece("%s 个加入申请", { iconPrefix: true }),
+      [],
+      "number placeholder must not become bare 个加入申请",
+    );
+    assert.deepEqual(
+      sampleFillsForPiece("打开项目 %s", { iconPrefix: true }),
+      [],
+      "non-leading %s must not INTERP-fill under iconPrefix",
     );
     assert.equal(
       sampleFillsForPiece("%s只读 · 可直接在本项目使用").includes(
@@ -198,6 +233,12 @@ describe("icon/spinner chrome empty-fill", () => {
       actions = \`<span class="asset-badge is-ro">\${huiIcon('lock')}只读 · 可直接在本项目使用</span>\`;
       btn = \`<button>\${huiIcon('plus')}安装到本项目</button>\`;
       line = \`<p>\${credentialSpinner(13)}正在校验令牌有效性与权限…</p>\`;
+      guide = \`<button>\${botIcon('plus')}开始添加</button>\`;
+      send = \`<button>\${botIcon('send')}试发给原发送者</button>\`;
+      menu = \`<button>\${ic('pencil')}编辑属性</button>\`;
+      foot = \`<button>\${icon('history')}旧版会话</button>\`;
+      script = \`<span>\${flowPalette.icon('code',14)} 打开代码编辑器编写脚本</span>\`;
+      count = \`<span>\${paIcon('user',12)}<span>\${n} 个加入申请</span></span>\`;
     `;
     const texts = new Set(extractDisplayStrings(src).map((p) => p.text));
     assert.ok(
@@ -212,17 +253,54 @@ describe("icon/spinner chrome empty-fill", () => {
       texts.has("正在校验令牌有效性与权限…"),
       `expected bare 正在校验…, got ${JSON.stringify([...texts])}`,
     );
+    assert.ok(
+      texts.has("开始添加"),
+      `expected bare 开始添加 after botIcon, got ${JSON.stringify([...texts])}`,
+    );
+    assert.ok(
+      texts.has("试发给原发送者"),
+      `expected bare 试发给原发送者, got ${JSON.stringify([...texts])}`,
+    );
+    assert.ok(
+      texts.has("编辑属性"),
+      `expected bare 编辑属性 after ic, got ${JSON.stringify([...texts])}`,
+    );
+    assert.ok(
+      texts.has("旧版会话"),
+      `expected bare 旧版会话 after icon, got ${JSON.stringify([...texts])}`,
+    );
+    assert.ok(
+      texts.has("打开代码编辑器编写脚本"),
+      `expected bare 打开… after spaced flowPalette.icon, got ${JSON.stringify([...texts])}`,
+    );
+    assert.equal(
+      texts.has("个加入申请"),
+      false,
+      "must not strip number hole into bare 个加入申请",
+    );
+    assert.ok(
+      texts.has("%s 个加入申请") || [...texts].some((t) => /个加入申请/.test(t) && t.includes("%s")),
+      `expected %s 个加入申请 kept, got ${JSON.stringify([...texts])}`,
+    );
   });
 
   it("pref-key alone does not cover bare icon text (must-fail)", () => {
     const dict = {
       "%s只读 · 可直接在本项目使用": "%s chỉ đọc · có thể dùng trực tiếp trong dự án này",
       "%s安装到本项目": "%s Cài vào dự án này",
+      "%s开始添加": "%s Bắt đầu thêm",
+      "%s试发给原发送者": "%s Gửi thử cho người gửi gốc",
+      "%s编辑属性": "%s Chỉnh thuộc tính",
+      "%s旧版会话": "%s Phiên cũ",
     };
     const { translate } = createTranslator(dict);
     assert.equal(isFullyTranslated("只读 · 可直接在本项目使用", translate), false);
     assert.equal(isFullyTranslated("安装到本项目", translate), false);
     assert.equal(isFullyTranslated("正在校验令牌有效性与权限…", translate), false);
+    assert.equal(isFullyTranslated("开始添加", translate), false);
+    assert.equal(isFullyTranslated("试发给原发送者", translate), false);
+    assert.equal(isFullyTranslated("编辑属性", translate), false);
+    assert.equal(isFullyTranslated("旧版会话", translate), false);
   });
 });
 

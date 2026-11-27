@@ -519,13 +519,14 @@ export function sampleFilledTemplates(raw) {
  * separate DOM node at runtime — the following Chinese is a bare text node.
  */
 export function isIconChromeExpr(expr) {
-  const e = String(expr || "");
-  return (
-    /huiIcon\s*\(/.test(e) ||
-    /credentialSpinner\s*\(/.test(e) ||
-    /credentialGlyph\s*\(/.test(e) ||
-    /skillhubLamp\s*\(/.test(e)
-  );
+  const e = String(expr || "").trim();
+  // ${botIcon(...)} / ${huiIcon(...)} / ${flowPalette.icon(...)} / ${ic(...)}
+  // become a separate DOM node; following Han is a bare text node at runtime.
+  const m = e.match(/^(?:[\w$]+\.)*([\w$]+)\s*\(/);
+  if (!m) return false;
+  const name = m[1];
+  if (name === "ic" || name === "icon") return true;
+  return /(?:Icon|Spinner|Glyph|Lamp)$/.test(name);
 }
 
 /**
@@ -551,8 +552,14 @@ export function sampleFillsForPiece(piece, opts = {}) {
   const text = String(piece || "");
   const holes = (text.match(/%s/g) || []).length;
   if (holes !== 1) return [];
-  if (opts.iconPrefix && /^%s[\u3400-\u9fff]/.test(text)) {
-    return [text.replace(/^%s/, "")];
+  if (opts.iconPrefix) {
+    // Glued `%s`+Han only (e.g. huiIcon()只读). Spaced `${icon} 打开…` /
+    // number holes (`${n} 个…`) are handled by emptyFillIconChrome on the
+    // raw template — never INTERP_SAMPLES under iconPrefix.
+    if (/^%s[\u3400-\u9fff]/.test(text)) {
+      return [text.replace(/^%s/, "")];
+    }
+    return [];
   }
   return INTERP_SAMPLES.map((fill) => text.replace(/%s/g, fill));
 }
