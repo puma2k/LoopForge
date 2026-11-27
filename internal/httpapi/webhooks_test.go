@@ -85,27 +85,28 @@ func TestProjectInboundWebhooks(t *testing.T) {
 		}
 		return rec
 	}
-	sign := func(secret string, payload []byte) string {
+	sign := func(secret, timestamp, nonce string, payload []byte) string {
 		mac := hmac.New(sha256.New, []byte(secret))
-		mac.Write(payload)
+		mac.Write(repo.WebhookHMACSignedPayload(timestamp, nonce, payload))
 		return "sha256=" + hex.EncodeToString(mac.Sum(nil))
 	}
 	ts := fmt.Sprintf("%d", time.Now().Unix())
 	good := map[string]string{
 		"X-LoopForge-Timestamp": ts,
 		"X-LoopForge-Nonce":     "nonce-1",
-		"X-LoopForge-Signature": sign(res.Secret, body),
+		"X-LoopForge-Signature": sign(res.Secret, ts, "nonce-1", body),
 		"Idempotency-Key":       "idem-1",
 	}
 	post(map[string]string{"X-LoopForge-Timestamp": ts, "X-LoopForge-Nonce": "n-bad"}, body, 401)
 	post(map[string]string{
 		"X-LoopForge-Timestamp": ts, "X-LoopForge-Nonce": "n-bad2",
-		"X-LoopForge-Signature": sign("wrong", body),
+		"X-LoopForge-Signature": sign("wrong", ts, "n-bad2", body),
 	}, body, 401)
+	expiredTS := fmt.Sprintf("%d", time.Now().Add(-20*time.Minute).Unix())
 	expired := post(map[string]string{
-		"X-LoopForge-Timestamp": fmt.Sprintf("%d", time.Now().Add(-20*time.Minute).Unix()),
+		"X-LoopForge-Timestamp": expiredTS,
 		"X-LoopForge-Nonce":     "n-old",
-		"X-LoopForge-Signature": sign(res.Secret, body),
+		"X-LoopForge-Signature": sign(res.Secret, expiredTS, "n-old", body),
 	}, body, 401)
 	if !strings.Contains(expired.Body.String(), "timestamp_expired") && !strings.Contains(expired.Body.String(), "timestamp outside") {
 		t.Fatalf("want timestamp_expired, got %s", expired.Body.String())
@@ -129,10 +130,11 @@ func TestProjectInboundWebhooks(t *testing.T) {
 	}
 
 	// Idempotency returns same issue and original HTTP status (201).
+	idemTS := fmt.Sprintf("%d", time.Now().Unix())
 	rec2 := post(map[string]string{
-		"X-LoopForge-Timestamp": fmt.Sprintf("%d", time.Now().Unix()),
+		"X-LoopForge-Timestamp": idemTS,
 		"X-LoopForge-Nonce":     "nonce-2",
-		"X-LoopForge-Signature": sign(res.Secret, body),
+		"X-LoopForge-Signature": sign(res.Secret, idemTS, "nonce-2", body),
 		"Idempotency-Key":       "idem-1",
 	}, body, 201)
 	var second map[string]any
@@ -141,28 +143,39 @@ func TestProjectInboundWebhooks(t *testing.T) {
 		t.Fatalf("idempotency mismatch: %v vs %v", second, first)
 	}
 
-	// Replay nonce.
+	// Captured MAC must not validate with a different nonce.
+	reusedMAC := sign(res.Secret, ts, "nonce-1", body)
 	post(map[string]string{
-		"X-LoopForge-Timestamp": fmt.Sprintf("%d", time.Now().Unix()),
+		"X-LoopForge-Timestamp": ts,
+		"X-LoopForge-Nonce":     "nonce-stolen",
+		"X-LoopForge-Signature": reusedMAC,
+	}, body, 401)
+
+	// Replay nonce.
+	replayTS := fmt.Sprintf("%d", time.Now().Unix())
+	post(map[string]string{
+		"X-LoopForge-Timestamp": replayTS,
 		"X-LoopForge-Nonce":     "nonce-1",
-		"X-LoopForge-Signature": sign(res.Secret, body),
+		"X-LoopForge-Signature": sign(res.Secret, replayTS, "nonce-1", body),
 	}, body, 401)
 
 	// Oversized payload.
 	big := bytes.Repeat([]byte("a"), domain.DefaultWebhookBodyLimit+10)
 	bigJSON := append([]byte(`{"title":"`), append(big, []byte(`"}`)...)...)
+	bigTS := fmt.Sprintf("%d", time.Now().Unix())
 	post(map[string]string{
-		"X-LoopForge-Timestamp": fmt.Sprintf("%d", time.Now().Unix()),
+		"X-LoopForge-Timestamp": bigTS,
 		"X-LoopForge-Nonce":     "nonce-big",
-		"X-LoopForge-Signature": sign(res.Secret, bigJSON),
+		"X-LoopForge-Signature": sign(res.Secret, bigTS, "nonce-big", bigJSON),
 	}, bigJSON, 413)
 
 	// Disable channel.
 	requestJSONAuthed[map[string]any](t, h, owner, "PUT", "/api/projects/wh-project/webhooks/"+res.Channel.ID, map[string]any{"enabled": false}, 200)
+	offTS := fmt.Sprintf("%d", time.Now().Unix())
 	post(map[string]string{
-		"X-LoopForge-Timestamp": fmt.Sprintf("%d", time.Now().Unix()),
+		"X-LoopForge-Timestamp": offTS,
 		"X-LoopForge-Nonce":     "nonce-off",
-		"X-LoopForge-Signature": sign(res.Secret, body),
+		"X-LoopForge-Signature": sign(res.Secret, offTS, "nonce-off", body),
 	}, body, 403)
 
 	// Re-enable + rotate secret; old secret works briefly, new works.
@@ -172,15 +185,17 @@ func TestProjectInboundWebhooks(t *testing.T) {
 	if newSecret == "" || newSecret == res.Secret {
 		t.Fatalf("rotate: %+v", rot)
 	}
+	oldSecTS := fmt.Sprintf("%d", time.Now().Unix())
 	post(map[string]string{
-		"X-LoopForge-Timestamp": fmt.Sprintf("%d", time.Now().Unix()),
+		"X-LoopForge-Timestamp": oldSecTS,
 		"X-LoopForge-Nonce":     "nonce-old-secret",
-		"X-LoopForge-Signature": sign(res.Secret, body),
+		"X-LoopForge-Signature": sign(res.Secret, oldSecTS, "nonce-old-secret", body),
 	}, body, 201)
+	newSecTS := fmt.Sprintf("%d", time.Now().Unix())
 	post(map[string]string{
-		"X-LoopForge-Timestamp": fmt.Sprintf("%d", time.Now().Unix()),
+		"X-LoopForge-Timestamp": newSecTS,
 		"X-LoopForge-Nonce":     "nonce-new-secret",
-		"X-LoopForge-Signature": sign(newSecret, body),
+		"X-LoopForge-Signature": sign(newSecret, newSecTS, "nonce-new-secret", body),
 	}, body, 201)
 
 	// Token auth mode.
@@ -217,10 +232,11 @@ func TestProjectInboundWebhooks(t *testing.T) {
 	adBody := []byte(`{"title":"auto"}`)
 	adPath := "/api/webhooks/inbound/" + ad.DeliveryToken
 	adReq := httptest.NewRequest("POST", adPath, bytes.NewReader(adBody))
+	adTS := fmt.Sprintf("%d", time.Now().Unix())
 	adReq.Header.Set("Content-Type", "application/json")
-	adReq.Header.Set("X-LoopForge-Timestamp", fmt.Sprintf("%d", time.Now().Unix()))
+	adReq.Header.Set("X-LoopForge-Timestamp", adTS)
 	adReq.Header.Set("X-LoopForge-Nonce", "auto-nonce")
-	adReq.Header.Set("X-LoopForge-Signature", sign(ad.Secret, adBody))
+	adReq.Header.Set("X-LoopForge-Signature", sign(ad.Secret, adTS, "auto-nonce", adBody))
 	adReq.Header.Set("Idempotency-Key", "idem-502")
 	adRec := httptest.NewRecorder()
 	h.ServeHTTP(adRec, adReq)
@@ -237,10 +253,11 @@ func TestProjectInboundWebhooks(t *testing.T) {
 		t.Fatal("secret in error response")
 	}
 	adRetry := httptest.NewRequest("POST", adPath, bytes.NewReader(adBody))
+	adRetryTS := fmt.Sprintf("%d", time.Now().Unix())
 	adRetry.Header.Set("Content-Type", "application/json")
-	adRetry.Header.Set("X-LoopForge-Timestamp", fmt.Sprintf("%d", time.Now().Unix()))
+	adRetry.Header.Set("X-LoopForge-Timestamp", adRetryTS)
 	adRetry.Header.Set("X-LoopForge-Nonce", "auto-nonce-2")
-	adRetry.Header.Set("X-LoopForge-Signature", sign(ad.Secret, adBody))
+	adRetry.Header.Set("X-LoopForge-Signature", sign(ad.Secret, adRetryTS, "auto-nonce-2", adBody))
 	adRetry.Header.Set("Idempotency-Key", "idem-502")
 	adRetryRec := httptest.NewRecorder()
 	h.ServeHTTP(adRetryRec, adRetry)
@@ -256,17 +273,19 @@ func TestProjectInboundWebhooks(t *testing.T) {
 	// Invalid JSON must not pin Idempotency-Key; retry with valid body succeeds.
 	badBody := []byte(`{not-json`)
 	badKey := "idem-bad-json"
+	badTS := fmt.Sprintf("%d", time.Now().Unix())
 	post(map[string]string{
-		"X-LoopForge-Timestamp": fmt.Sprintf("%d", time.Now().Unix()),
+		"X-LoopForge-Timestamp": badTS,
 		"X-LoopForge-Nonce":     "nonce-bad-json",
-		"X-LoopForge-Signature": sign(newSecret, badBody),
+		"X-LoopForge-Signature": sign(newSecret, badTS, "nonce-bad-json", badBody),
 		"Idempotency-Key":       badKey,
 	}, badBody, 400)
 	goodAfterBad := []byte(`{"title":"after bad json","body":"ok"}`)
+	afterTS := fmt.Sprintf("%d", time.Now().Unix())
 	recAfterBad := post(map[string]string{
-		"X-LoopForge-Timestamp": fmt.Sprintf("%d", time.Now().Unix()),
+		"X-LoopForge-Timestamp": afterTS,
 		"X-LoopForge-Nonce":     "nonce-after-bad-json",
-		"X-LoopForge-Signature": sign(newSecret, goodAfterBad),
+		"X-LoopForge-Signature": sign(newSecret, afterTS, "nonce-after-bad-json", goodAfterBad),
 		"Idempotency-Key":       badKey,
 	}, goodAfterBad, 201)
 	var afterBad map[string]any
@@ -302,21 +321,23 @@ func TestWebhookInboundRateLimitHTTP(t *testing.T) {
 	res := requestJSONAuthed[created](t, h, owner, "POST", "/api/projects/wh-rl/webhooks", map[string]any{
 		"name": "rl", "authMode": "hmac",
 	}, 201)
-	sign := func(secret string, payload []byte) string {
+	sign := func(secret, timestamp, nonce string, payload []byte) string {
 		mac := hmac.New(sha256.New, []byte(secret))
-		mac.Write(payload)
+		mac.Write(repo.WebhookHMACSignedPayload(timestamp, nonce, payload))
 		return "sha256=" + hex.EncodeToString(mac.Sum(nil))
 	}
 	body := []byte(`{"title":"rl"}`)
 	path := "/api/webhooks/inbound/" + res.DeliveryToken
-	// Exhaust per-channel budget (rate limit runs before auth/body parse).
+	// Exhaust per-channel budget (rate limit runs after successful auth).
 	var limited *httptest.ResponseRecorder
 	for i := 0; i < webhookRateChannelLimit+1; i++ {
+		ts := fmt.Sprintf("%d", time.Now().Unix())
+		nonce := fmt.Sprintf("rl-%d", i)
 		req := httptest.NewRequest("POST", path, bytes.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("X-LoopForge-Timestamp", fmt.Sprintf("%d", time.Now().Unix()))
-		req.Header.Set("X-LoopForge-Nonce", fmt.Sprintf("rl-%d", i))
-		req.Header.Set("X-LoopForge-Signature", sign(res.Secret, body))
+		req.Header.Set("X-LoopForge-Timestamp", ts)
+		req.Header.Set("X-LoopForge-Nonce", nonce)
+		req.Header.Set("X-LoopForge-Signature", sign(res.Secret, ts, nonce, body))
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, req)
 		if rec.Code == 429 {

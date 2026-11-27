@@ -401,19 +401,35 @@ func subtleConstantTimeEqual(a, b string) bool {
 	return v == 0
 }
 
-// MatchWebhookHMAC opens active sealed secrets and verifies HMAC-SHA256(secret, body).
-func (r *WebhooksRepo) MatchWebhookHMAC(channelID string, body, wantMAC []byte, now time.Time) (bool, int, error) {
+// WebhookHMACSignedPayload builds the bytes covered by inbound HMAC:
+// timestamp + "." + nonce + "." + rawBody. Timestamp and nonce must be in the
+// MAC so a captured signature cannot be replayed with a fresh nonce/ts.
+func WebhookHMACSignedPayload(timestamp, nonce string, body []byte) []byte {
+	n := len(timestamp) + 1 + len(nonce) + 1 + len(body)
+	out := make([]byte, 0, n)
+	out = append(out, timestamp...)
+	out = append(out, '.')
+	out = append(out, nonce...)
+	out = append(out, '.')
+	out = append(out, body...)
+	return out
+}
+
+// MatchWebhookHMAC opens active sealed secrets and verifies
+// HMAC-SHA256(secret, timestamp + "." + nonce + "." + body).
+func (r *WebhooksRepo) MatchWebhookHMAC(channelID, timestamp, nonce string, body, wantMAC []byte, now time.Time) (bool, int, error) {
 	rows, err := r.ActiveWebhookSecrets(channelID, now)
 	if err != nil {
 		return false, 0, err
 	}
+	signed := WebhookHMACSignedPayload(timestamp, nonce, body)
 	for _, row := range rows {
 		plain, err := r.openWebhookSecret(channelID, row.SecretEnc)
 		if err != nil {
 			continue
 		}
 		mac := hmac.New(sha256.New, []byte(plain))
-		mac.Write(body)
+		mac.Write(signed)
 		got := mac.Sum(nil)
 		if subtle.ConstantTimeCompare(got, wantMAC) == 1 {
 			return true, row.Version, nil

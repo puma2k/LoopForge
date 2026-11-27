@@ -107,7 +107,7 @@
       ${paRow('描述', '', `<textarea class="pa-input" name="whDesc" rows="2">${escapeHTML(ch.description || '')}</textarea>`, { stack: true })}
       ${paRow('鉴权方式', '默认 HMAC-SHA256（请求头 X-LoopForge-Signature）。', `<select class="select" name="whAuth">${authOpts}</select>`)}
       ${paRow('默认 SOP', '创建需求时绑定；开启自动运行时会 dispatch 该 SOP。', `<select class="select" name="whWorkflow"><option value="">不绑定</option>${workflows}</select>`)}
-      ${paRow('负责人', '', `<select class="select" name="whAssignee"><option value="0">项目 Owner</option>${members}</select>`)}
+      ${paRow('渠道负责人', '', `<select class="select" name="whAssignee"><option value="0">项目 Owner</option>${members}</select>`)}
       ${paRow('标题模板', '支持 {{title}}、{{.issue.title}}；留空则回退字段。', `<input class="pa-input mono" name="whTitleTpl" value="${escapeHTML(ch.titleTemplate || '')}" placeholder="{{title}}">`)}
       ${paRow('描述模板', '', `<input class="pa-input mono" name="whDescTpl" value="${escapeHTML(ch.descriptionTemplate || '')}" placeholder="{{body}}">`)}
       ${paRow('自动运行 SOP', '创建需求后立即 dispatch 默认 SOP。', `<label class="pa-switch-wrap"><input type="checkbox" name="whAuto" role="switch" ${ch.autoDispatch ? 'checked' : ''}><span class="pa-switch"></span></label>`, { attrs: ' data-pa-row-inline' })}

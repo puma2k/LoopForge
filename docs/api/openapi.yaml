@@ -1619,7 +1619,9 @@ paths:
       security: []
       description: |
         Public inbound webhook. Authenticates with delivery token + HMAC or static token.
-        Requires X-LoopForge-Timestamp and X-LoopForge-Nonce. Optional Idempotency-Key.
+        Requires X-LoopForge-Timestamp and X-LoopForge-Nonce (both covered by HMAC:
+        `HMAC-SHA256(secret, ts + "." + nonce + "." + rawBody)`). Optional Idempotency-Key.
+        Rate limits apply after successful authentication.
       requestBody:
         required: true
         content:

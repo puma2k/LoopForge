@@ -37,11 +37,17 @@ func TestWebhookChannelSecretRotateAndHMAC(t *testing.T) {
 		t.Fatalf("match secret: ok=%v ver=%d err=%v", ok, ver, err)
 	}
 	body := []byte(`{"a":1}`)
+	ts, nonce := "1700000000", "nonce-hmac-1"
 	mac := hmac.New(sha256.New, []byte(secret1))
-	mac.Write(body)
-	ok, ver, err = s.MatchWebhookHMAC(ch.ID, body, mac.Sum(nil), now)
+	mac.Write(WebhookHMACSignedPayload(ts, nonce, body))
+	ok, ver, err = s.MatchWebhookHMAC(ch.ID, ts, nonce, body, mac.Sum(nil), now)
 	if err != nil || !ok || ver != 1 {
 		t.Fatalf("hmac: ok=%v ver=%d err=%v", ok, ver, err)
+	}
+	// Captured MAC must not validate under a different nonce.
+	okReplay, _, err := s.MatchWebhookHMAC(ch.ID, ts, "nonce-other", body, mac.Sum(nil), now)
+	if err != nil || okReplay {
+		t.Fatalf("hmac with swapped nonce should fail: ok=%v err=%v", okReplay, err)
 	}
 	secret2 := "whsec_test_secret_two________________"
 	if _, _, err := s.RotateWebhookSecret(ch.ID, secret2, time.Minute); err != nil {

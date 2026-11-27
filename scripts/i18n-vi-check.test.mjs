@@ -202,6 +202,121 @@ describe("i18n-vi-check must-fail cases (review findings)", () => {
     );
   });
 
+  it("catches mục 3 bad VI values (dính / máy thực thi)", () => {
+    const bad = [
+      ["项目共享执行机器", "dự án dùng chung máy thực thi"],
+      ["无法加载工作区执行机器", "Không thể tải máy thực thi bàn làm việc"],
+      ["使用执行机器的账号模型", "dùng máy thực thi tài khoản mô hình"],
+      ["执行机器版本", "máy thực thi phiên bản"],
+      ["等待云端执行机器", "Đang chờ trong đám mây runner"],
+      ["暂无项目说明", "chưa có dự ánmô tả"],
+    ];
+    for (const [key, v] of bad) {
+      const issues = checkValue(key, v);
+      assert.ok(
+        issues.length > 0,
+        `expected issues for ${JSON.stringify(v)}: ${JSON.stringify(issues)}`,
+      );
+    }
+  });
+
+  it("catches JS identifier rewrite inside ${…}", () => {
+    const issues = checkValue(
+      "给${escapeHTML(kind)}起个名字",
+      "Đặt tên cho ${escapeHTML(loại)}",
+    );
+    assert.ok(
+      hasType(issues, "placeholder"),
+      `expected placeholder parity for kind→loại: ${JSON.stringify(issues)}`,
+    );
+  });
+
+  it("catches không đã tìm thấy / Mới nhất SOP calques", () => {
+    const bad = [
+      ["资产不存在或已删除", "Tài nguyên không đã tìm thấy hoặc đã xóa"],
+      ["未找到该需求", "Yêu cầu không đã tìm thấy"],
+      ["未找到最新 SOP", "Mới nhất SOP không đã tìm thấy"],
+      ["其他项目还没有共享", "Không khác dự án có dùng chung"],
+      ["运行不存在", "Chạy không đã tìm thấy"],
+    ];
+    for (const [key, v] of bad) {
+      const issues = checkValue(key, v);
+      assert.ok(
+        hasType(issues, "calque"),
+        `expected calque in ${JSON.stringify(v)}: ${JSON.stringify(issues)}`,
+      );
+    }
+  });
+
+  it("catches Không đã / Mới <noun> / mới nhất SOP / Các Issue calques", () => {
+    const bad = [
+      ["未接入", "Không đã kết nối"],
+      ["尚未选择", "Không đã chọn"],
+      ["未闭环", "Không đã đóng"],
+      ["新建规则", "Mới quy tắc"],
+      ["新建技能", "Mới Skill"],
+      ["新建沙箱", "Mới Sandbox"],
+      ["已更新为最新 SOP", "Đã cập nhật đến mới nhất SOP"],
+      ["更新为最新 SOP（", "Cập nhật đến mới nhất SOP ("],
+      ["个关联 GitHub Issue", " liên kết GitHub Các Issue"],
+    ];
+    for (const [key, v] of bad) {
+      const issues = checkValue(key, v);
+      assert.ok(
+        hasType(issues, "calque"),
+        `expected calque in ${JSON.stringify(v)}: ${JSON.stringify(issues)}`,
+      );
+    }
+  });
+
+  it("catches runner/máy chạy when key has 机器 (UI labels)", () => {
+    const bad = [
+      ["接入新机器", "Kết nối runner"],
+      ["我的机器", "Runner của tôi"],
+      ["默认机器", "Mặc định runner"],
+      ["当前默认机器", "Máy chạy mặc định hiện tại"],
+    ];
+    for (const [key, v] of bad) {
+      const issues = checkValue(key, v);
+      assert.ok(
+        hasType(issues, "term"),
+        `expected term in ${JSON.stringify(v)}: ${JSON.stringify(issues)}`,
+      );
+    }
+  });
+
+  it("blacklist wins over allowlist when a word is on both", () => {
+    // "Contents" is blacklisted; even a product-looking sentence must fail.
+    const issues = checkValue(
+      "管理员尚未配置 GitHub 授权时，也可以手动填写有 Contents 和 Pull requests 读写权限的 PAT",
+      "Khi quản trị viên chưa cấu hình ủy quyền GitHub, cũng có thể điền thủ công PAT có quyền đọc/ghi Contents và yêu cầu kéo.",
+    );
+    assert.ok(
+      hasType(issues, "blacklist"),
+      `expected blacklist Contents: ${JSON.stringify(issues)}`,
+    );
+  });
+
+  it("catches VI letter glued to latin tech token", () => {
+    for (const v of ["tảiworkspace", "dùngSOP", "trênrunner", "mởGit"]) {
+      const issues = checkValue("x", v);
+      assert.ok(
+        hasType(issues, "dính"),
+        `expected dính in ${v}: ${JSON.stringify(issues)}`,
+      );
+    }
+  });
+
+  it("catches runner/máy chạy when key has 执行机器", () => {
+    for (const v of ["Gỡ runner", "Cấu hình runner", "Dùng máy chạy"]) {
+      const issues = checkValue("移除执行机器", v);
+      assert.ok(
+        hasType(issues, "term"),
+        `expected term in ${v}: ${JSON.stringify(issues)}`,
+      );
+    }
+  });
+
   it("catches thể hiện mistranslation when key contains 实例", () => {
     const cases = [
       [
@@ -331,6 +446,78 @@ describe("i18n-vi-check must-pass cases", () => {
       ['" title="打开运行', '" title="Mở lần chạy'],
       ["预览构建", "Xem trước bản dựng"],
       ["这个会话还没有工作区。", "Phiên này chưa có bàn làm việc."],
+    ];
+    for (const [key, value] of good) {
+      const issues = checkValue(key, value);
+      assert.deepEqual(
+        issues,
+        [],
+        `unexpected issues for ${value}: ${JSON.stringify(issues)}`,
+      );
+    }
+  });
+
+  it("passes mục 3 suggested máy thực thi / grammar fixes", () => {
+    const good = [
+      ["项目共享执行机器", "Máy thực thi dùng chung của dự án"],
+      ["无法加载工作区执行机器", "Không thể tải máy thực thi của bàn làm việc"],
+      ["使用执行机器的账号模型", "Dùng mô hình theo tài khoản trên máy thực thi"],
+      ["执行机器版本", "Phiên bản máy thực thi"],
+      ["等待云端执行机器", "Đang chờ máy thực thi trên đám mây"],
+      ["暂无项目说明", "Chưa có mô tả dự án"],
+    ];
+    for (const [key, value] of good) {
+      const issues = checkValue(key, value);
+      assert.deepEqual(
+        issues,
+        [],
+        `unexpected issues for ${value}: ${JSON.stringify(issues)}`,
+      );
+    }
+  });
+
+  it("passes fixed not-found calques and intact ${kind}", () => {
+    const good = [
+      ["给${escapeHTML(kind)}起个名字", "Đặt tên cho ${escapeHTML(kind)}"],
+      ["${escapeHTML(kind)}内容", "Nội dung ${escapeHTML(kind)}"],
+      ["资产不存在或已删除", "Không tìm thấy tài nguyên hoặc đã bị xóa"],
+      ["未找到该需求", "Không tìm thấy yêu cầu"],
+      ["未找到最新 SOP", "Không tìm thấy SOP mới nhất"],
+      ["其他项目还没有共享", "Các dự án khác chưa chia sẻ "],
+      ["运行不存在", "Không tìm thấy lần chạy"],
+      ["没有找到指定的 MCP server", "Không tìm thấy máy chủ MCP đã chỉ định"],
+    ];
+    for (const [key, value] of good) {
+      const issues = checkValue(key, value);
+      assert.deepEqual(
+        issues,
+        [],
+        `unexpected issues for ${value}: ${JSON.stringify(issues)}`,
+      );
+    }
+  });
+
+  it("passes fixed Không đã / Mới / SOP / Issue and máy thực thi labels", () => {
+    const good = [
+      ["未接入", "Chưa kết nối"],
+      ["尚未选择", "Chưa chọn"],
+      ["未闭环", "Chưa đóng vòng"],
+      ["新建规则", "Quy tắc mới"],
+      ["新建技能", "Skill mới"],
+      ["新建沙箱", "Sandbox mới"],
+      ["已更新为最新 SOP", "Đã cập nhật lên SOP mới nhất"],
+      ["更新为最新 SOP（", "Cập nhật lên SOP mới nhất ("],
+      ["个关联 GitHub Issue", " Issue GitHub liên kết"],
+      ["请粘贴 GitHub Issue 链接", "Dán liên kết GitHub Issue"],
+      ["接入新机器", "Kết nối máy thực thi mới"],
+      ["我的机器", "Máy thực thi của tôi"],
+      ["默认机器", "Máy thực thi mặc định"],
+      ["当前默认机器", "Máy thực thi mặc định hiện tại"],
+      ["创建%s", "Tạo %s"],
+      ["本项目%s", "%s của dự án này"],
+      ["共享%s", "%s dùng chung"],
+      ["%s已删除", "Đã xóa %s"],
+      ["确认删除%s「%s」？此操作不可恢复。", "Xóa %s “%s”? Thao tác này không thể hoàn tác."],
     ];
     for (const [key, value] of good) {
       const issues = checkValue(key, value);

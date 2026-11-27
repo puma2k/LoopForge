@@ -113,15 +113,6 @@ func (h *webhooksHandlers) inbound(c *gin.Context) {
 		c.JSON(403, gin.H{"error": "webhook channel is disabled"})
 		return
 	}
-	if !h.allowWebhookAttempt(ch.ID, clientIP) {
-		_ = h.repo.RecordWebhookEvent(domain.ProjectWebhookEvent{
-			ID: eventID, ChannelID: ch.ID, ProjectID: ch.ProjectID, Status: domain.WebhookEventRejected,
-			Reason: "rate_limited", ClientIP: clientIP, ReceivedAt: now,
-		}, "")
-		c.Header("Retry-After", "60")
-		c.JSON(429, gin.H{"error": "rate limit exceeded"})
-		return
-	}
 
 	maxBytes := ch.EffectiveMaxBodyBytes()
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, int64(maxBytes))
@@ -172,14 +163,24 @@ func (h *webhooksHandlers) inbound(c *gin.Context) {
 		return
 	}
 
-	// Verify auth before claiming nonce so forged signatures cannot burn nonces.
-	okAuth, authReason := h.verifyWebhookAuth(ch, c.Request, raw, now)
+	// Verify auth before rate-limit/nonce so forged signatures cannot burn budgets or nonces.
+	okAuth, authReason := h.verifyWebhookAuth(ch, c.Request, raw, tsHeader, nonce, now)
 	if !okAuth {
 		_ = h.repo.RecordWebhookEvent(domain.ProjectWebhookEvent{
 			ID: eventID, ChannelID: ch.ID, ProjectID: ch.ProjectID, Status: domain.WebhookEventRejected,
 			Reason: authReason, ClientIP: clientIP, PayloadBytes: len(raw), ReceivedAt: now,
 		}, "")
 		c.JSON(401, gin.H{"error": "authentication failed"})
+		return
+	}
+
+	if !h.allowWebhookAttempt(ch.ID, clientIP) {
+		_ = h.repo.RecordWebhookEvent(domain.ProjectWebhookEvent{
+			ID: eventID, ChannelID: ch.ID, ProjectID: ch.ProjectID, Status: domain.WebhookEventRejected,
+			Reason: "rate_limited", ClientIP: clientIP, PayloadBytes: len(raw), ReceivedAt: now,
+		}, "")
+		c.Header("Retry-After", "60")
+		c.JSON(429, gin.H{"error": "rate limit exceeded"})
 		return
 	}
 
@@ -418,7 +419,7 @@ Scripts may also read these from the issue comment and from run input. Secrets a
 		ctx.ChannelID, ctx.EventID, string(headers), string(payload)))
 }
 
-func (h *webhooksHandlers) verifyWebhookAuth(ch domain.ProjectWebhookChannel, r *http.Request, raw []byte, now time.Time) (bool, string) {
+func (h *webhooksHandlers) verifyWebhookAuth(ch domain.ProjectWebhookChannel, r *http.Request, raw []byte, timestamp, nonce string, now time.Time) (bool, string) {
 	mode := domain.NormalizeWebhookAuthMode(ch.AuthMode)
 	sigHeader := strings.TrimSpace(r.Header.Get("X-LoopForge-Signature"))
 	tokenHeader := strings.TrimSpace(r.Header.Get("X-LoopForge-Token"))
@@ -431,7 +432,7 @@ func (h *webhooksHandlers) verifyWebhookAuth(ch domain.ProjectWebhookChannel, r 
 	hmacOK := false
 	tokenOK := false
 	if sigHeader != "" {
-		secret, ver, err := h.findSecretMatchingHMAC(ch.ID, raw, sigHeader, now)
+		secret, ver, err := h.findSecretMatchingHMAC(ch.ID, timestamp, nonce, raw, sigHeader, now)
 		_ = secret
 		_ = ver
 		if err == nil && secret != "" {
@@ -464,7 +465,7 @@ func (h *webhooksHandlers) verifyWebhookAuth(ch domain.ProjectWebhookChannel, r 
 	}
 }
 
-func (h *webhooksHandlers) findSecretMatchingHMAC(channelID string, raw []byte, sigHeader string, now time.Time) (matchedSecret string, version int, err error) {
+func (h *webhooksHandlers) findSecretMatchingHMAC(channelID, timestamp, nonce string, raw []byte, sigHeader string, now time.Time) (matchedSecret string, version int, err error) {
 	sigHeader = strings.TrimSpace(sigHeader)
 	lower := strings.ToLower(sigHeader)
 	if strings.HasPrefix(lower, "sha256=") {
@@ -474,7 +475,7 @@ func (h *webhooksHandlers) findSecretMatchingHMAC(channelID string, raw []byte, 
 	if err != nil || len(want) != sha256.Size {
 		return "", 0, errors.New("bad signature encoding")
 	}
-	ok, ver, err := h.repo.MatchWebhookHMAC(channelID, raw, want, now)
+	ok, ver, err := h.repo.MatchWebhookHMAC(channelID, timestamp, nonce, raw, want, now)
 	if err != nil || !ok {
 		return "", 0, errors.New("hmac mismatch")
 	}

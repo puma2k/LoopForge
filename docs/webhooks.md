@@ -25,14 +25,16 @@ Migration thủ công: `migrations/043_project_inbound_webhooks.sql`.
 
 | Mode | Header |
 | --- | --- |
-| `hmac` (mặc định) | `X-LoopForge-Signature: sha256=<hex(HMAC-SHA256(secret, rawBody))>` |
+| `hmac` (mặc định) | `X-LoopForge-Signature: sha256=<hex(HMAC-SHA256(secret, ts + "." + nonce + "." + rawBody))>` |
 | `token` | `X-LoopForge-Token: <secret>` hoặc `Authorization: Bearer <secret>` |
 | `hmac_or_token` | HMAC hoặc token |
 
+Chuỗi ký HMAC **bắt buộc** gồm timestamp và nonce (không chỉ raw body), để chữ ký đã lộ không tái dùng với nonce/ts mới.
+
 Bắt buộc thêm (chống replay):
 
-- `X-LoopForge-Timestamp`: Unix giây, cửa sổ ±5 phút
-- `X-LoopForge-Nonce`: chuỗi duy nhất theo kênh (nonce đã dùng → 401)
+- `X-LoopForge-Timestamp`: Unix giây, cửa sổ ±5 phút (nằm trong MAC)
+- `X-LoopForge-Nonce`: chuỗi duy nhất theo kênh (nằm trong MAC; nonce đã dùng → 401)
 
 Tuỳ chọn:
 
@@ -45,7 +47,8 @@ BODY='{"title":"Fix login flake","body":"CI failed on suite A"}'
 TS=$(date +%s)
 NONCE=$(openssl rand -hex 16)
 # SECRET và DELIVERY_TOKEN chỉ là placeholder — dùng giá trị từ UI
-SIG=$(printf '%s' "$BODY" | openssl dgst -sha256 -hmac "$SECRET" | awk '{print $2}')
+# Ký: timestamp + "." + nonce + "." + rawBody
+SIG=$(printf '%s.%s.%s' "$TS" "$NONCE" "$BODY" | openssl dgst -sha256 -hmac "$SECRET" | awk '{print $2}')
 
 curl -sS -X POST "$PUBLIC_URL/api/webhooks/inbound/$DELIVERY_TOKEN" \
   -H 'Content-Type: application/json' \
@@ -114,8 +117,8 @@ Placeholder prompt: `{{webhook.payload}}`, `{{webhook.headers}}`, `{{webhook.cha
 
 - Endpoint public tách biệt; không nới ACL/CSRF của API đã đăng nhập.
 - So khớp chữ ký / token timing-safe; reject 401 khi sai/thiếu.
-- Nonce + timestamp chống replay.
-- Rate limit theo kênh và IP.
+- HMAC gắn timestamp+nonce+body; nonce một lần + cửa sổ timestamp chống replay.
+- Rate limit theo kênh và IP (sau khi auth thành công).
 - Log sự kiện chỉ metadata (channel, issue, status, lý do) — **không** log secret/chữ ký/Authorization.
 - Secret hashed + sealed; rotate không làm gián đoạn request hợp lệ dùng secret cũ trong cửa sổ ân hạn.
 
