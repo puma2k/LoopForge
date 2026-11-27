@@ -76,14 +76,15 @@ type projectWebhookNonceRow struct {
 func (projectWebhookNonceRow) TableName() string { return "project_webhook_nonces" }
 
 type projectWebhookIdempotencyRow struct {
-	ChannelID   string    `gorm:"column:channel_id;primaryKey;size:64"`
-	KeyHash     string    `gorm:"column:key_hash;primaryKey;size:64"`
-	IssueID     string    `gorm:"column:issue_id;size:128"`
-	IssueNumber int       `gorm:"column:issue_number"`
-	TaskID      string    `gorm:"column:task_id;size:128"`
-	RunID       string    `gorm:"column:run_id;size:128"`
-	ResponseJSON string   `gorm:"column:response_json;type:mediumtext"`
-	ExpiresAt   time.Time `gorm:"column:expires_at;index:idx_project_webhook_idempotency_expires"`
+	ChannelID      string    `gorm:"column:channel_id;primaryKey;size:64"`
+	KeyHash        string    `gorm:"column:key_hash;primaryKey;size:64"`
+	IssueID        string    `gorm:"column:issue_id;size:128"`
+	IssueNumber    int       `gorm:"column:issue_number"`
+	TaskID         string    `gorm:"column:task_id;size:128"`
+	RunID          string    `gorm:"column:run_id;size:128"`
+	ResponseJSON   string    `gorm:"column:response_json;type:mediumtext"`
+	ResponseStatus int       `gorm:"column:response_status"`
+	ExpiresAt      time.Time `gorm:"column:expires_at;index:idx_project_webhook_idempotency_expires"`
 }
 
 func (projectWebhookIdempotencyRow) TableName() string { return "project_webhook_idempotency" }
@@ -447,31 +448,39 @@ func (r *WebhooksRepo) ClaimWebhookNonceStrict(channelID, nonce string, now time
 // ErrWebhookIdempotencyPending means another request holds the key but has not finished yet.
 var ErrWebhookIdempotencyPending = errors.New("webhook idempotency key pending")
 
+// webhookIdempotencyReplayStatus maps a stored status; 0 (legacy) means 200.
+func webhookIdempotencyReplayStatus(stored int) int {
+	if stored <= 0 {
+		return 200
+	}
+	return stored
+}
+
 // WebhookIdempotencyLookup returns a prior response for the same key if still valid.
-func (r *WebhooksRepo) WebhookIdempotencyLookup(channelID, key string, now time.Time) (issueID string, issueNumber int, taskID, runID, responseJSON string, ok bool, err error) {
+func (r *WebhooksRepo) WebhookIdempotencyLookup(channelID, key string, now time.Time) (issueID string, issueNumber int, taskID, runID, responseJSON string, httpStatus int, ok bool, err error) {
 	key = strings.TrimSpace(key)
 	if key == "" {
-		return "", 0, "", "", "", false, nil
+		return "", 0, "", "", "", 0, false, nil
 	}
 	_ = r.DB.Where("expires_at < ?", now).Delete(&projectWebhookIdempotencyRow{}).Error
 	var row projectWebhookIdempotencyRow
 	q := r.DB.Where("channel_id = ? AND key_hash = ? AND expires_at > ?", channelID, hexSHA256(key), now).Limit(1).Find(&row)
 	if q.Error != nil {
-		return "", 0, "", "", "", false, q.Error
+		return "", 0, "", "", "", 0, false, q.Error
 	}
 	if row.IssueID == "" {
-		return "", 0, "", "", "", false, nil
+		return "", 0, "", "", "", 0, false, nil
 	}
-	return row.IssueID, row.IssueNumber, row.TaskID, row.RunID, row.ResponseJSON, true, nil
+	return row.IssueID, row.IssueNumber, row.TaskID, row.RunID, row.ResponseJSON, webhookIdempotencyReplayStatus(row.ResponseStatus), true, nil
 }
 
 // ClaimWebhookIdempotency inserts a pending row for the key. claimed=true means this
 // caller owns creation. claimed=false with ok=true returns the winner's completed
 // response (waits briefly if still pending).
-func (r *WebhooksRepo) ClaimWebhookIdempotency(channelID, key string, now time.Time) (claimed bool, issueID string, issueNumber int, taskID, runID, responseJSON string, ok bool, err error) {
+func (r *WebhooksRepo) ClaimWebhookIdempotency(channelID, key string, now time.Time) (claimed bool, issueID string, issueNumber int, taskID, runID, responseJSON string, httpStatus int, ok bool, err error) {
 	key = strings.TrimSpace(key)
 	if key == "" {
-		return true, "", 0, "", "", "", false, nil
+		return true, "", 0, "", "", "", 0, false, nil
 	}
 	_ = r.DB.Where("expires_at < ?", now).Delete(&projectWebhookIdempotencyRow{}).Error
 	row := projectWebhookIdempotencyRow{
@@ -479,41 +488,45 @@ func (r *WebhooksRepo) ClaimWebhookIdempotency(channelID, key string, now time.T
 	}
 	res := r.DB.Clauses(clause.OnConflict{DoNothing: true}).Create(&row)
 	if res.Error != nil {
-		return false, "", 0, "", "", "", false, res.Error
+		return false, "", 0, "", "", "", 0, false, res.Error
 	}
 	if res.RowsAffected == 1 {
-		return true, "", 0, "", "", "", false, nil
+		return true, "", 0, "", "", "", 0, false, nil
 	}
 	deadline := time.Now().Add(2 * time.Second)
 	for {
 		var existing projectWebhookIdempotencyRow
 		q := r.DB.Where("channel_id = ? AND key_hash = ?", channelID, hexSHA256(key)).Limit(1).Find(&existing)
 		if q.Error != nil {
-			return false, "", 0, "", "", "", false, q.Error
+			return false, "", 0, "", "", "", 0, false, q.Error
 		}
 		if existing.IssueID != "" {
-			return false, existing.IssueID, existing.IssueNumber, existing.TaskID, existing.RunID, existing.ResponseJSON, true, nil
+			return false, existing.IssueID, existing.IssueNumber, existing.TaskID, existing.RunID, existing.ResponseJSON, webhookIdempotencyReplayStatus(existing.ResponseStatus), true, nil
 		}
 		if time.Now().After(deadline) {
-			return false, "", 0, "", "", "", false, ErrWebhookIdempotencyPending
+			return false, "", 0, "", "", "", 0, false, ErrWebhookIdempotencyPending
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
 }
 
 // PutWebhookIdempotency stores (or completes) the response for a key.
-func (r *WebhooksRepo) PutWebhookIdempotency(channelID, key, issueID string, issueNumber int, taskID, runID, responseJSON string, now time.Time) error {
+func (r *WebhooksRepo) PutWebhookIdempotency(channelID, key, issueID string, issueNumber int, taskID, runID, responseJSON string, httpStatus int, now time.Time) error {
 	key = strings.TrimSpace(key)
 	if key == "" {
 		return nil
 	}
+	if httpStatus <= 0 {
+		httpStatus = 200
+	}
 	row := projectWebhookIdempotencyRow{
 		ChannelID: channelID, KeyHash: hexSHA256(key), IssueID: issueID, IssueNumber: issueNumber,
-		TaskID: taskID, RunID: runID, ResponseJSON: responseJSON, ExpiresAt: now.Add(domain.WebhookIdempotencyTTL),
+		TaskID: taskID, RunID: runID, ResponseJSON: responseJSON, ResponseStatus: httpStatus,
+		ExpiresAt: now.Add(domain.WebhookIdempotencyTTL),
 	}
 	return r.DB.Clauses(clause.OnConflict{
 		Columns:   []clause.Column{{Name: "channel_id"}, {Name: "key_hash"}},
-		DoUpdates: clause.AssignmentColumns([]string{"issue_id", "issue_number", "task_id", "run_id", "response_json", "expires_at"}),
+		DoUpdates: clause.AssignmentColumns([]string{"issue_id", "issue_number", "task_id", "run_id", "response_json", "response_status", "expires_at"}),
 	}).Create(&row).Error
 }
 

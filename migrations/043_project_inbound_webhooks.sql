@@ -64,6 +64,7 @@ CREATE TABLE IF NOT EXISTS project_webhook_idempotency (
   task_id VARCHAR(128) NULL,
   run_id VARCHAR(128) NULL,
   response_json MEDIUMTEXT NULL,
+  response_status INT NOT NULL DEFAULT 200,
   expires_at DATETIME(3) NOT NULL,
   PRIMARY KEY (channel_id, key_hash),
   KEY idx_project_webhook_idempotency_expires (expires_at)

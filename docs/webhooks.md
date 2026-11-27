@@ -125,11 +125,13 @@ Placeholder prompt: `{{webhook.payload}}`, `{{webhook.headers}}`, `{{webhook.cha
 | --- | --- |
 | 401 | Sai/thiếu chữ ký hoặc token; timestamp ngoài cửa sổ; nonce trùng; URL token sai |
 | 403 | Kênh đã tắt |
-| 409 | (idempotency/conflict khác — webhook idempotent trả 200 cùng issue) |
+| 409 | Idempotency key đang được xử lý (`idempotency_pending`) — đợi rồi thử lại |
 | 413 | Body vượt hạn |
 | 415 | `Content-Type` không phải `application/json` |
 | 429 | Rate limit — xem `Retry-After` |
 | 502 | Issue đã tạo nhưng auto-dispatch SOP thất bại |
+
+Idempotent replay (cùng `Idempotency-Key` trong TTL): trả **cùng HTTP status và body** đã lưu lần đầu (ví dụ 201 hoặc 502), không tạo issue mới. Body JSON lỗi (400) **không** khóa key — có thể gửi lại cùng key với payload hợp lệ.
 
 Xem log gần đây trên UI kênh (tab Webhook → Sự kiện).
 

@@ -128,13 +128,13 @@ func TestProjectInboundWebhooks(t *testing.T) {
 		t.Fatalf("externalRef=%+v", issue.ExternalRef)
 	}
 
-	// Idempotency returns same issue.
+	// Idempotency returns same issue and original HTTP status (201).
 	rec2 := post(map[string]string{
 		"X-LoopForge-Timestamp": fmt.Sprintf("%d", time.Now().Unix()),
 		"X-LoopForge-Nonce":     "nonce-2",
 		"X-LoopForge-Signature": sign(res.Secret, body),
 		"Idempotency-Key":       "idem-1",
-	}, body, 200)
+	}, body, 201)
 	var second map[string]any
 	_ = json.Unmarshal(rec2.Body.Bytes(), &second)
 	if second["issueId"] != issueID {
@@ -244,13 +244,37 @@ func TestProjectInboundWebhooks(t *testing.T) {
 	adRetry.Header.Set("Idempotency-Key", "idem-502")
 	adRetryRec := httptest.NewRecorder()
 	h.ServeHTTP(adRetryRec, adRetry)
-	if adRetryRec.Code != 200 {
-		t.Fatalf("502 idempotency retry want 200 got %d %s", adRetryRec.Code, adRetryRec.Body.String())
+	if adRetryRec.Code != 502 {
+		t.Fatalf("502 idempotency retry want 502 got %d %s", adRetryRec.Code, adRetryRec.Body.String())
 	}
 	var adRetryResp map[string]any
 	_ = json.Unmarshal(adRetryRec.Body.Bytes(), &adRetryResp)
 	if adRetryResp["issueId"] != adIssue {
 		t.Fatalf("502 idempotency created duplicate: %v vs %s", adRetryResp, adIssue)
+	}
+
+	// Invalid JSON must not pin Idempotency-Key; retry with valid body succeeds.
+	badBody := []byte(`{not-json`)
+	badKey := "idem-bad-json"
+	post(map[string]string{
+		"X-LoopForge-Timestamp": fmt.Sprintf("%d", time.Now().Unix()),
+		"X-LoopForge-Nonce":     "nonce-bad-json",
+		"X-LoopForge-Signature": sign(newSecret, badBody),
+		"Idempotency-Key":       badKey,
+	}, badBody, 400)
+	goodAfterBad := []byte(`{"title":"after bad json","body":"ok"}`)
+	recAfterBad := post(map[string]string{
+		"X-LoopForge-Timestamp": fmt.Sprintf("%d", time.Now().Unix()),
+		"X-LoopForge-Nonce":     "nonce-after-bad-json",
+		"X-LoopForge-Signature": sign(newSecret, goodAfterBad),
+		"Idempotency-Key":       badKey,
+	}, goodAfterBad, 201)
+	var afterBad map[string]any
+	if err := json.Unmarshal(recAfterBad.Body.Bytes(), &afterBad); err != nil {
+		t.Fatal(err)
+	}
+	if afterBad["issueId"] == "" {
+		t.Fatalf("expected issue after invalid-json retry: %s", recAfterBad.Body.String())
 	}
 }
 

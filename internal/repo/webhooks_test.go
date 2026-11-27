@@ -59,15 +59,15 @@ func TestWebhookChannelSecretRotateAndHMAC(t *testing.T) {
 		t.Fatalf("replay want ErrWebhookReplay got %v", err)
 	}
 
-	claimed, _, _, _, _, _, _, err := s.ClaimWebhookIdempotency(ch.ID, "idem-a", now)
+	claimed, _, _, _, _, _, _, _, err := s.ClaimWebhookIdempotency(ch.ID, "idem-a", now)
 	if err != nil || !claimed {
 		t.Fatalf("first claim: claimed=%v err=%v", claimed, err)
 	}
-	if err := s.PutWebhookIdempotency(ch.ID, "idem-a", "issue-1", 7, "t1", "r1", `{"issueId":"issue-1"}`, now); err != nil {
+	if err := s.PutWebhookIdempotency(ch.ID, "idem-a", "issue-1", 7, "t1", "r1", `{"issueId":"issue-1"}`, 201, now); err != nil {
 		t.Fatal(err)
 	}
-	claimed2, issueID, num, _, _, respJSON, ok, err := s.ClaimWebhookIdempotency(ch.ID, "idem-a", now)
-	if err != nil || claimed2 || !ok || issueID != "issue-1" || num != 7 || !strings.Contains(respJSON, "issue-1") {
-		t.Fatalf("second claim: claimed=%v ok=%v issue=%s num=%d body=%q err=%v", claimed2, ok, issueID, num, respJSON, err)
+	claimed2, issueID, num, _, _, respJSON, status, ok, err := s.ClaimWebhookIdempotency(ch.ID, "idem-a", now)
+	if err != nil || claimed2 || !ok || issueID != "issue-1" || num != 7 || status != 201 || !strings.Contains(respJSON, "issue-1") {
+		t.Fatalf("second claim: claimed=%v ok=%v issue=%s num=%d status=%d body=%q err=%v", claimed2, ok, issueID, num, status, respJSON, err)
 	}
 }

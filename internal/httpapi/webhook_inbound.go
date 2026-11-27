@@ -196,9 +196,26 @@ func (h *webhooksHandlers) inbound(c *gin.Context) {
 		return
 	}
 
+	// Parse JSON before claiming idempotency so a bad body cannot pin a key as pending.
+	var payload map[string]any
+	if len(raw) == 0 {
+		payload = map[string]any{}
+	} else {
+		dec := json.NewDecoder(strings.NewReader(string(raw)))
+		dec.UseNumber()
+		if err := dec.Decode(&payload); err != nil {
+			_ = h.repo.RecordWebhookEvent(domain.ProjectWebhookEvent{
+				ID: eventID, ChannelID: ch.ID, ProjectID: ch.ProjectID, Status: domain.WebhookEventRejected,
+				Reason: "invalid_json", ClientIP: clientIP, PayloadBytes: len(raw), ReceivedAt: now,
+			}, "")
+			c.JSON(400, gin.H{"error": "invalid JSON payload"})
+			return
+		}
+	}
+
 	idemKey := strings.TrimSpace(c.GetHeader("Idempotency-Key"))
 	if idemKey != "" {
-		claimed, issueID, issueNumber, taskID, runID, responseJSON, hit, err := h.repo.ClaimWebhookIdempotency(ch.ID, idemKey, now)
+		claimed, issueID, issueNumber, taskID, runID, responseJSON, httpStatus, hit, err := h.repo.ClaimWebhookIdempotency(ch.ID, idemKey, now)
 		if err != nil {
 			if errors.Is(err, repo.ErrWebhookIdempotencyPending) {
 				_ = h.repo.RecordWebhookEvent(domain.ProjectWebhookEvent{
@@ -219,27 +236,14 @@ func (h *webhooksHandlers) inbound(c *gin.Context) {
 				Reason: "idempotent_replay", IssueID: issueID, IssueNumber: issueNumber, TaskID: taskID, RunID: runID,
 				IdempotencyKeyID: shortKeyID(idemKey), ClientIP: clientIP, PayloadBytes: len(raw), ReceivedAt: now,
 			}, "")
+			if httpStatus <= 0 {
+				httpStatus = 200
+			}
 			if responseJSON != "" {
-				c.Data(200, "application/json", []byte(responseJSON))
+				c.Data(httpStatus, "application/json", []byte(responseJSON))
 				return
 			}
-			c.JSON(200, gin.H{"issueId": issueID, "number": issueNumber, "taskId": taskID, "runId": runID, "idempotent": true})
-			return
-		}
-	}
-
-	var payload map[string]any
-	if len(raw) == 0 {
-		payload = map[string]any{}
-	} else {
-		dec := json.NewDecoder(strings.NewReader(string(raw)))
-		dec.UseNumber()
-		if err := dec.Decode(&payload); err != nil {
-			_ = h.repo.RecordWebhookEvent(domain.ProjectWebhookEvent{
-				ID: eventID, ChannelID: ch.ID, ProjectID: ch.ProjectID, Status: domain.WebhookEventRejected,
-				Reason: "invalid_json", ClientIP: clientIP, PayloadBytes: len(raw), ReceivedAt: now,
-			}, "")
-			c.JSON(400, gin.H{"error": "invalid JSON payload"})
+			c.JSON(httpStatus, gin.H{"issueId": issueID, "number": issueNumber, "taskId": taskID, "runId": runID, "idempotent": true})
 			return
 		}
 	}
@@ -343,11 +347,11 @@ func (h *webhooksHandlers) inbound(c *gin.Context) {
 	h.finishWebhookIdempotent(c, ch.ID, idemKey, issue, taskID, runID, resp, httpStatus, now, status, eventID, clientIP)
 }
 
-// finishWebhookIdempotent records the idempotency mapping (including 502 bodies) then writes the HTTP response.
+// finishWebhookIdempotent records the idempotency mapping (including 502 bodies + status) then writes the HTTP response.
 func (h *webhooksHandlers) finishWebhookIdempotent(c *gin.Context, channelID, idemKey string, issue domain.Issue, taskID, runID string, resp gin.H, httpStatus int, now time.Time, status, eventID, clientIP string) {
 	body, _ := json.Marshal(resp)
 	if idemKey != "" {
-		_ = h.repo.PutWebhookIdempotency(channelID, idemKey, issue.ID, issue.Number, taskID, runID, string(body), now)
+		_ = h.repo.PutWebhookIdempotency(channelID, idemKey, issue.ID, issue.Number, taskID, runID, string(body), httpStatus, now)
 	}
 	logWebhookMeta(status, channelID, eventID, issue.ID, issue.Number, clientIP)
 	c.Data(httpStatus, "application/json", body)
