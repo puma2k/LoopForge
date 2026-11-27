@@ -128,6 +128,52 @@
     }
     return text;
   }
+  // Whole-string %s templates so runtime text like 给规则起个名字 hits 给%s起个名字.
+  const printfKeys = Object.keys(dict)
+    .filter(k => {
+      if (!k.includes('%s')) return false;
+      const val = dict[k];
+      if (typeof val !== 'string' || !val || HAN_CHARS.test(val)) return false;
+      const lit = k.replace(/%s/g, '');
+      const han = (lit.match(/[\u3400-\u9fff]/g) || []).length;
+      if (han >= 2) return true;
+      if (han >= 1 && lit.trim().length >= 2) return true;
+      return /[A-Za-z]{2,}/.test(lit) && lit.trim().length >= 3;
+    })
+    .sort((a, b) => b.length - a.length);
+  const printfPatterns = printfKeys.map(k => {
+    const parts = k.split('%s');
+    let reSrc = '^';
+    for (let i = 0; i < parts.length; i++) {
+      reSrc += escape(parts[i]);
+      if (i < parts.length - 1) reSrc += '([\\s\\S]+?)';
+    }
+    reSrc += '$';
+    return { re: new RegExp(reSrc), key: k };
+  });
+  function translateSlot(slot) {
+    const trimmed = slot && String(slot).trim();
+    if (
+      trimmed &&
+      Object.prototype.hasOwnProperty.call(dict, trimmed) &&
+      dict[trimmed] &&
+      !HAN_CHARS.test(dict[trimmed])
+    ) {
+      return String(slot).replace(trimmed, dict[trimmed]);
+    }
+    return slot;
+  }
+  function applyPrintf(text) {
+    const trimmed = text.trim();
+    for (const { re, key } of printfPatterns) {
+      const m = trimmed.match(re);
+      if (!m) continue;
+      let i = 1;
+      const filled = dict[key].replace(/%s/g, () => translateSlot(m[i++]));
+      return text.replace(trimmed, filled);
+    }
+    return text;
+  }
   const punct = [[/，/g, ', '], [/。/g, '. '], [/：/g, ': '], [/；/g, '; '], [/、/g, ', '], [/！/g, '! '], [/？/g, '? '], [/（/g, ' ('], [/）/g, ') '], [/「|」/g, '"'], [/『|』/g, '"']];
   const MONTHS_EN = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
   const MONTHS_VI = ['Thg 1', 'Thg 2', 'Thg 3', 'Thg 4', 'Thg 5', 'Thg 6', 'Thg 7', 'Thg 8', 'Thg 9', 'Thg 10', 'Thg 11', 'Thg 12'];
@@ -192,7 +238,7 @@
     if (Object.prototype.hasOwnProperty.call(dict, trimmed) && dict[trimmed] && !HAN_CHARS.test(dict[trimmed])) {
       out = text.replace(trimmed, dict[trimmed]);
     } else {
-      out = text;
+      out = applyPrintf(text);
     }
     if (HAN.test(out)) {
       out = applyFragments(out);

@@ -66,6 +66,9 @@ const CALQUES = [
   "và làm không",
   "có không khả dụng",
   "và khác nâng cao",
+  "không đã tìm thấy",
+  "Mới nhất SOP",
+  "Không khác dự án",
 ];
 
 /** Calques matched with a trailing boundary so "không thể làm" is not hit. */
@@ -412,58 +415,46 @@ const ALLOWLIST_EXACT = [
   "Checkers",
   "Completions",
   "ultracode",
-  "Secret",
   "AppKey",
   "COPY",
   "telemetry",
   "toolchain",
   "CorpId",
-  "App",
-  "Client",
-  "native",
-  "ding",
-  "uv",
-  "robot",
-  "Contents",
   "AppID",
   "Guild",
   "Tab",
-  "baseline",
-  "runtime",
   "IM",
   "Avatar",
-  "menu",
-  "viewport",
-  "trigger",
-  "Banner",
-  "snapshot",
-  "upstream",
-  "downstream",
-  "server",
   "USD",
   "Workflow",
-  "site",
-  "Run",
-  "Base",
-  "tools",
-  "list",
   "PostgreSQL",
   "Terminal",
-  "terminal",
   "IP",
   "IPv6",
-  "Iteration",
-  "Console",
-  "FAQ",
-  "demo",
   "BigModel",
   "Integrations",
-  "User",
   "Keys",
-  "overview",
-  "logs",
   "Messages",
   "Anthropic",
+  // Product / protocol nouns used as UI labels (not filler English)
+  "App",
+  "Client",
+  "runtime",
+  "baseline",
+  "Base", // Base URL
+  "tools", // tools/list MCP method
+  "list",
+  "native", // native sandbox
+  "uv",
+  "robot",
+  "Secret",
+  "ding", // DingTalk CorpId prefix
+  "viewport",
+  "Console",
+  "Iteration",
+  "overview",
+  "logs",
+  "demo",
 ];
 
 const ALLOWLIST_SET = new Set(ALLOWLIST_EXACT);
@@ -1629,7 +1620,8 @@ function checkPlaceholders(value) {
 function placeholderSignature(text) {
   return extractPlaceholders(text).map((p) => {
     if (p.raw.startsWith("{{")) return p.raw; // exact {{name}}
-    if (p.raw.startsWith("${")) return "${}";
+    // Keep full ${expr} so translating identifiers (kind→loại) fails parity.
+    if (p.raw.startsWith("${")) return p.raw;
     if (p.raw.startsWith("{")) return "{}";
     return p.raw.replace(/[0-9]+/, ""); // %s / %d / %v / %w
   });
@@ -2036,12 +2028,13 @@ export function checkValue(key, value) {
     }
     // Vietnamese ASCII syllables win over the English blacklist ("to" in "phóng to").
     if (VI_ASCII_SET.has(lower)) continue;
-    // Explicit product allowlist wins over blacklist (e.g. User API Keys, Contents).
-    if (isAllowedTerm(word)) continue;
+    // Blacklist always wins when a word is on both lists (e.g. Contents, run/user).
     if (BLACKLIST_SET.has(lower)) {
       issues.push({ type: "blacklist", detail: word });
       continue;
     }
+    // Product / technical allowlist only after blacklist.
+    if (isAllowedTerm(word)) continue;
     if (word.length === 1) continue;
     issues.push({ type: "english", detail: word });
   }

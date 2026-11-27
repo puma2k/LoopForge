@@ -103,6 +103,39 @@ describe("createTranslator + isFullyTranslated", () => {
     const { translate: tr2 } = createTranslator(dict2);
     assert.equal(isFullyTranslated(t, tr2), true);
   });
+
+  it("covers runtime-interpolated %s samples via printf patterns", () => {
+    const dict2 = {
+      ...dict,
+      "给%s起个名字": "Đặt tên cho %s",
+      "%s内容": "Nội dung %s",
+      规则: "Quy tắc",
+      Skill: "Skill",
+    };
+    const { translate: tr2 } = createTranslator(dict2);
+    assert.equal(tr2("给规则起个名字"), "Đặt tên cho Quy tắc");
+    assert.equal(isFullyTranslated("给规则起个名字", tr2), true);
+    assert.equal(tr2("Skill内容"), "Nội dung Skill");
+    assert.equal(isFullyTranslated("Skill内容", tr2), true);
+    assert.equal(isFullyTranslated("给Skill起个名字", tr2), true);
+  });
+});
+
+describe("extractDisplayStrings samples for ${…}", () => {
+  it("emits sample-filled variants for template interpolations", () => {
+    const src = `
+      const kind = assetKindLabel();
+      el.placeholder = \`给\${escapeHTML(kind)}起个名字\`;
+      el.setAttribute("aria-label", \`\${escapeHTML(kind)}内容\`);
+    `;
+    const parts = extractDisplayStrings(src, { isHtml: false });
+    const texts = new Set(parts.map((p) => p.text));
+    assert.ok(texts.has("给%s起个名字") || [...texts].some((t) => t.includes("起个名字")));
+    assert.ok(
+      [...texts].some((t) => t === "给规则起个名字" || t === "给Skill起个名字"),
+      `expected sample fills, got ${JSON.stringify([...texts])}`,
+    );
+  });
 });
 
 describe("extractDisplayStrings integration", () => {

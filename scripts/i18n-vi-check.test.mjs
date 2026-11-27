@@ -220,6 +220,46 @@ describe("i18n-vi-check must-fail cases (review findings)", () => {
     }
   });
 
+  it("catches JS identifier rewrite inside ${…}", () => {
+    const issues = checkValue(
+      "给${escapeHTML(kind)}起个名字",
+      "Đặt tên cho ${escapeHTML(loại)}",
+    );
+    assert.ok(
+      hasType(issues, "placeholder"),
+      `expected placeholder parity for kind→loại: ${JSON.stringify(issues)}`,
+    );
+  });
+
+  it("catches không đã tìm thấy / Mới nhất SOP calques", () => {
+    const bad = [
+      ["资产不存在或已删除", "Tài nguyên không đã tìm thấy hoặc đã xóa"],
+      ["未找到该需求", "Yêu cầu không đã tìm thấy"],
+      ["未找到最新 SOP", "Mới nhất SOP không đã tìm thấy"],
+      ["其他项目还没有共享", "Không khác dự án có dùng chung"],
+      ["运行不存在", "Chạy không đã tìm thấy"],
+    ];
+    for (const [key, v] of bad) {
+      const issues = checkValue(key, v);
+      assert.ok(
+        hasType(issues, "calque"),
+        `expected calque in ${JSON.stringify(v)}: ${JSON.stringify(issues)}`,
+      );
+    }
+  });
+
+  it("blacklist wins over allowlist when a word is on both", () => {
+    // "Contents" is blacklisted; even a product-looking sentence must fail.
+    const issues = checkValue(
+      "管理员尚未配置 GitHub 授权时，也可以手动填写有 Contents 和 Pull requests 读写权限的 PAT",
+      "Khi quản trị viên chưa cấu hình ủy quyền GitHub, cũng có thể điền thủ công PAT có quyền đọc/ghi Contents và yêu cầu kéo.",
+    );
+    assert.ok(
+      hasType(issues, "blacklist"),
+      `expected blacklist Contents: ${JSON.stringify(issues)}`,
+    );
+  });
+
   it("catches VI letter glued to latin tech token", () => {
     for (const v of ["tảiworkspace", "dùngSOP", "trênrunner", "mởGit"]) {
       const issues = checkValue("x", v);
@@ -388,6 +428,27 @@ describe("i18n-vi-check must-pass cases", () => {
       ["执行机器版本", "Phiên bản máy thực thi"],
       ["等待云端执行机器", "Đang chờ máy thực thi trên đám mây"],
       ["暂无项目说明", "Chưa có mô tả dự án"],
+    ];
+    for (const [key, value] of good) {
+      const issues = checkValue(key, value);
+      assert.deepEqual(
+        issues,
+        [],
+        `unexpected issues for ${value}: ${JSON.stringify(issues)}`,
+      );
+    }
+  });
+
+  it("passes fixed not-found calques and intact ${kind}", () => {
+    const good = [
+      ["给${escapeHTML(kind)}起个名字", "Đặt tên cho ${escapeHTML(kind)}"],
+      ["${escapeHTML(kind)}内容", "Nội dung ${escapeHTML(kind)}"],
+      ["资产不存在或已删除", "Không tìm thấy tài nguyên hoặc đã bị xóa"],
+      ["未找到该需求", "Không tìm thấy yêu cầu"],
+      ["未找到最新 SOP", "Không tìm thấy SOP mới nhất"],
+      ["其他项目还没有共享", "Các dự án khác chưa chia sẻ "],
+      ["运行不存在", "Không tìm thấy lần chạy"],
+      ["没有找到指定的 MCP server", "Không tìm thấy máy chủ MCP đã chỉ định"],
     ];
     for (const [key, value] of good) {
       const issues = checkValue(key, value);

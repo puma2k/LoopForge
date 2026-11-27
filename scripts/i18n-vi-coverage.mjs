@@ -373,6 +373,42 @@ export function normalizePlaceholders(text) {
 /**
  * Build a translator that mirrors web/i18n.js (exact → fragments → patterns).
  */
+/** Representative fills for label-like ${…} holes when probing runtime coverage. */
+export const INTERP_SAMPLES = [
+  "规则",
+  "技能",
+  "沙箱",
+  "资产",
+  "Skill",
+  "MCP",
+  "SOP",
+];
+
+/**
+ * Only probe sample fills when the template interpolates a display label
+ * (e.g. escapeHTML(kind) / assetKindLabel), not ids, counts, or control flow.
+ */
+export function shouldSampleExpand(raw, normalized) {
+  if (!raw || !normalized || !/%s/.test(normalized)) return false;
+  if (!/\$\{/.test(raw)) return false;
+  const exprs = [...String(raw).matchAll(/\$\{([^}]+)\}/g)].map((m) => m[1]);
+  if (!exprs.length) return false;
+  return exprs.some(
+    (e) =>
+      /^\s*escapeHTML\s*\(\s*kind\s*\)\s*$/.test(e) ||
+      /^\s*kind\s*$/.test(e) ||
+      /assetKindLabel\s*\(/.test(e) ||
+      /KindLabel\s*\(/.test(e),
+  );
+}
+
+/** Fill a single %s hole with a sample; skip multi-hole fragments (avoids 规则规则). */
+export function sampleFillsForPiece(piece) {
+  const text = String(piece || "");
+  if ((text.match(/%s/g) || []).length !== 1) return [];
+  return INTERP_SAMPLES.map((fill) => text.replace(/%s/g, fill));
+}
+
 export function createTranslator(dict) {
   const escape = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const fragments = Object.keys(dict)
@@ -392,6 +428,51 @@ export function createTranslator(dict) {
         "g",
       ),
     );
+  }
+  const printfKeys = Object.keys(dict)
+    .filter((k) => {
+      if (!k.includes("%s")) return false;
+      const val = dict[k];
+      if (typeof val !== "string" || !val || HAN_CHARS.test(val)) return false;
+      const lit = k.replace(/%s/g, "");
+      const han = (lit.match(/[\u3400-\u9fff]/g) || []).length;
+      if (han >= 2) return true;
+      if (han >= 1 && lit.trim().length >= 2) return true;
+      return /[A-Za-z]{2,}/.test(lit) && lit.trim().length >= 3;
+    })
+    .sort((a, b) => b.length - a.length);
+  const printfPatterns = printfKeys.map((k) => {
+    const parts = k.split("%s");
+    let reSrc = "^";
+    for (let i = 0; i < parts.length; i++) {
+      reSrc += escape(parts[i]);
+      if (i < parts.length - 1) reSrc += "([\\s\\S]+?)";
+    }
+    reSrc += "$";
+    return { re: new RegExp(reSrc), key: k };
+  });
+  function translateSlot(slot) {
+    const trimmed = slot && String(slot).trim();
+    if (
+      trimmed &&
+      Object.prototype.hasOwnProperty.call(dict, trimmed) &&
+      dict[trimmed] &&
+      !HAN_CHARS.test(dict[trimmed])
+    ) {
+      return String(slot).replace(trimmed, dict[trimmed]);
+    }
+    return slot;
+  }
+  function applyPrintf(text) {
+    const trimmed = text.trim();
+    for (const { re, key } of printfPatterns) {
+      const m = trimmed.match(re);
+      if (!m) continue;
+      let i = 1;
+      const filled = dict[key].replace(/%s/g, () => translateSlot(m[i++]));
+      return text.replace(trimmed, filled);
+    }
+    return text;
   }
   const level = { 高: "Cao", 中: "Trung bình", 低: "Thấp" };
   const patterns = [
@@ -439,7 +520,7 @@ export function createTranslator(dict) {
     ) {
       out = text.replace(trimmed, dict[trimmed]);
     } else {
-      out = text;
+      out = applyPrintf(text);
     }
     if (HAN.test(out)) {
       for (const re of fragmentREs) {
@@ -453,7 +534,7 @@ export function createTranslator(dict) {
     return out;
   }
 
-  return { translate, fragmentCount: fragments.length };
+  return { translate, fragmentCount: fragments.length, printfCount: printfKeys.length };
 }
 
 /**
@@ -538,12 +619,24 @@ export function extractDisplayStrings(src, { isHtml = false, isJsx = false } = {
   for (const { raw, index, kind } of extractQuotedStrings(cleaned)) {
     let text = raw;
     if (kind === "template") text = normalizePlaceholders(raw);
+    const sample = kind === "template" && shouldSampleExpand(raw, text);
     if (looksLikeHtml(text)) {
       for (const p of extractFromHtml(text)) {
         push(p.text, index, `html-in-js-${p.kind}`);
+        // Probe runtime fills for label-like ${kind} holes left as %s.
+        if (sample) {
+          for (const filled of sampleFillsForPiece(p.text)) {
+            push(filled, index, `html-in-js-${p.kind}-sample`);
+          }
+        }
       }
     } else {
       push(text, index, kind);
+      if (sample) {
+        for (const filled of sampleFillsForPiece(text)) {
+          push(filled, index, `${kind}-sample`);
+        }
+      }
     }
   }
 
