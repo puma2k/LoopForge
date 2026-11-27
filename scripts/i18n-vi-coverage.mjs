@@ -515,14 +515,45 @@ export function sampleFilledTemplates(raw) {
 }
 
 /**
+ * True when ${…} is decorative chrome (icon / spinner / glyph) that becomes a
+ * separate DOM node at runtime — the following Chinese is a bare text node.
+ */
+export function isIconChromeExpr(expr) {
+  const e = String(expr || "");
+  return (
+    /huiIcon\s*\(/.test(e) ||
+    /credentialSpinner\s*\(/.test(e) ||
+    /credentialGlyph\s*\(/.test(e) ||
+    /skillhubLamp\s*\(/.test(e)
+  );
+}
+
+/**
+ * Empty-fill icon/spinner/glyph holes so coverage sees the runtime bare text
+ * (e.g. ${huiIcon('lock')}只读… → 只读…).
+ */
+export function emptyFillIconChrome(raw) {
+  const s = String(raw || "");
+  if (!/\$\{/.test(s)) return s;
+  return s.replace(/\$\{([^}]+)\}/g, (full, expr) =>
+    isIconChromeExpr(expr) ? "" : full,
+  );
+}
+
+/**
  * Probe fills for an already-normalized piece containing %s.
  * Single-hole: INTERP_SAMPLES. Multi-hole pieces are handled via
  * sampleFilledTemplates on the raw template instead (avoids 规则创建规则).
+ * When opts.iconPrefix: leading `%s`+Han gets empty fill only (bare runtime
+ * text after huiIcon/spinner) — never INTERP_SAMPLES (avoids 规则访问密钥…).
  */
-export function sampleFillsForPiece(piece) {
+export function sampleFillsForPiece(piece, opts = {}) {
   const text = String(piece || "");
   const holes = (text.match(/%s/g) || []).length;
   if (holes !== 1) return [];
+  if (opts.iconPrefix && /^%s[\u3400-\u9fff]/.test(text)) {
+    return [text.replace(/^%s/, "")];
+  }
   return INTERP_SAMPLES.map((fill) => text.replace(/%s/g, fill));
 }
 
@@ -737,13 +768,23 @@ export function extractDisplayStrings(src, { isHtml = false, isJsx = false } = {
     let text = raw;
     if (kind === "template") text = normalizePlaceholders(raw);
     const sample = kind === "template" && shouldSampleExpand(raw, text);
+    const hasIconChrome =
+      kind === "template" &&
+      [...String(raw).matchAll(/\$\{([^}]+)\}/g)].some((m) =>
+        isIconChromeExpr(m[1]),
+      );
     if (looksLikeHtml(text)) {
       for (const p of extractFromHtml(text)) {
         push(p.text, index, `html-in-js-${p.kind}`);
-        // Single-%s pieces still get local sample fills.
+        // Single-%s pieces still get local sample fills (labels).
         if (sample) {
           for (const filled of sampleFillsForPiece(p.text)) {
             push(filled, index, `html-in-js-${p.kind}-sample`);
+          }
+        } else if (hasIconChrome) {
+          // Icon/spinner prefix: empty-fill only (runtime bare Chinese).
+          for (const filled of sampleFillsForPiece(p.text, { iconPrefix: true })) {
+            push(filled, index, `html-in-js-${p.kind}-icon-empty`);
           }
         }
       }
@@ -752,6 +793,10 @@ export function extractDisplayStrings(src, { isHtml = false, isJsx = false } = {
       if (sample) {
         for (const filled of sampleFillsForPiece(text)) {
           push(filled, index, `${kind}-sample`);
+        }
+      } else if (hasIconChrome) {
+        for (const filled of sampleFillsForPiece(text, { iconPrefix: true })) {
+          push(filled, index, `${kind}-icon-empty`);
         }
       }
     }
@@ -766,6 +811,18 @@ export function extractDisplayStrings(src, { isHtml = false, isJsx = false } = {
         } else {
           push(filledText, index, `${kind}-sample`);
         }
+      }
+    }
+    // Icon/spinner/glyph → empty fill so bare Chinese after chrome is checked.
+    if (hasIconChrome) {
+      const emptiedRaw = emptyFillIconChrome(raw);
+      const emptiedText = normalizePlaceholders(emptiedRaw);
+      if (looksLikeHtml(emptiedText) || looksLikeHtml(emptiedRaw)) {
+        for (const p of extractFromHtml(emptiedText)) {
+          push(p.text, index, `html-in-js-icon-empty`);
+        }
+      } else if (emptiedText !== text) {
+        push(emptiedText, index, `template-icon-empty`);
       }
     }
   }

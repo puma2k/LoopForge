@@ -7,11 +7,14 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import {
   createTranslator,
+  emptyFillIconChrome,
   extractDisplayStrings,
   extractFromHtml,
   extractQuotedStrings,
   isFullyTranslated,
+  isIconChromeExpr,
   normalizePlaceholders,
+  sampleFillsForPiece,
   stripComments,
 } from "./i18n-vi-coverage.mjs";
 
@@ -145,6 +148,81 @@ describe("createTranslator + isFullyTranslated", () => {
     assert.equal(tr2("创建%s"), "Tạo %s");
     assert.equal(isFullyTranslated("创建%s", tr2), true);
     assert.equal(isFullyTranslated("创建规则", tr2), true);
+  });
+});
+
+describe("icon/spinner chrome empty-fill", () => {
+  it("detects huiIcon / spinner / glyph exprs", () => {
+    assert.equal(isIconChromeExpr("huiIcon('lock')"), true);
+    assert.equal(isIconChromeExpr("credentialSpinner(13)"), true);
+    assert.equal(isIconChromeExpr("credentialGlyph('lock',13)"), true);
+    assert.equal(isIconChromeExpr("escapeHTML(kind)"), false);
+  });
+
+  it("emptyFillIconChrome strips chrome holes only", () => {
+    assert.equal(
+      emptyFillIconChrome("${huiIcon('lock')}只读 · 可直接在本项目使用"),
+      "只读 · 可直接在本项目使用",
+    );
+    assert.equal(
+      emptyFillIconChrome("${credentialSpinner(13)}正在校验令牌有效性与权限…"),
+      "正在校验令牌有效性与权限…",
+    );
+    assert.equal(
+      emptyFillIconChrome("${huiIcon('plus')}创建${escapeHTML(kind)}"),
+      "创建${escapeHTML(kind)}",
+    );
+  });
+
+  it("sampleFillsForPiece empty-fills leading %s+Han only with iconPrefix", () => {
+    assert.deepEqual(
+      sampleFillsForPiece("%s只读 · 可直接在本项目使用", { iconPrefix: true }),
+      ["只读 · 可直接在本项目使用"],
+    );
+    assert.equal(
+      sampleFillsForPiece("%s只读 · 可直接在本项目使用").includes(
+        "只读 · 可直接在本项目使用",
+      ),
+      false,
+      "without iconPrefix, do not empty-fill (label probes use INTERP_SAMPLES)",
+    );
+    assert.equal(
+      sampleFillsForPiece("创建%s", { iconPrefix: true }).includes("创建"),
+      false,
+      "label suffix hole must not empty-fill to stub 创建",
+    );
+  });
+
+  it("extractDisplayStrings probes bare Chinese after icon chrome", () => {
+    const src = `
+      actions = \`<span class="asset-badge is-ro">\${huiIcon('lock')}只读 · 可直接在本项目使用</span>\`;
+      btn = \`<button>\${huiIcon('plus')}安装到本项目</button>\`;
+      line = \`<p>\${credentialSpinner(13)}正在校验令牌有效性与权限…</p>\`;
+    `;
+    const texts = new Set(extractDisplayStrings(src).map((p) => p.text));
+    assert.ok(
+      texts.has("只读 · 可直接在本项目使用"),
+      `expected bare 只读…, got ${JSON.stringify([...texts])}`,
+    );
+    assert.ok(
+      texts.has("安装到本项目"),
+      `expected bare 安装到本项目, got ${JSON.stringify([...texts])}`,
+    );
+    assert.ok(
+      texts.has("正在校验令牌有效性与权限…"),
+      `expected bare 正在校验…, got ${JSON.stringify([...texts])}`,
+    );
+  });
+
+  it("pref-key alone does not cover bare icon text (must-fail)", () => {
+    const dict = {
+      "%s只读 · 可直接在本项目使用": "%s chỉ đọc · có thể dùng trực tiếp trong dự án này",
+      "%s安装到本项目": "%s Cài vào dự án này",
+    };
+    const { translate } = createTranslator(dict);
+    assert.equal(isFullyTranslated("只读 · 可直接在本项目使用", translate), false);
+    assert.equal(isFullyTranslated("安装到本项目", translate), false);
+    assert.equal(isFullyTranslated("正在校验令牌有效性与权限…", translate), false);
   });
 });
 
