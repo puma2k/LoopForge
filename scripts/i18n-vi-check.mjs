@@ -2020,6 +2020,13 @@ export function checkValue(key, value) {
   if (HAN.test(value)) {
     issues.push({ type: "han", detail: "contains Han characters" });
   }
+  // Cloud池-style: Latin / Vietnamese letter glued directly to leftover Han.
+  if (/[A-Za-zÀ-ỹà-ỹ][\u3400-\u9fff]|[\u3400-\u9fff][A-Za-zÀ-ỹà-ỹ]/.test(value)) {
+    issues.push({
+      type: "han-glue",
+      detail: "Latin/Vietnamese letter glued to Han (Cloud池-style)",
+    });
+  }
   if (CJK_PUNCT.test(value)) {
     issues.push({ type: "cjk-punct", detail: "contains CJK punctuation" });
   }

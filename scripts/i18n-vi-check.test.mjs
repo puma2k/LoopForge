@@ -16,6 +16,16 @@ function hasType(issues, type) {
 }
 
 describe("i18n-vi-check must-fail cases (review findings)", () => {
+  it("catches Cloud池-style Latin/VI glued to leftover Han", () => {
+    for (const v of ["Cloud池", "Cloud池 online", "có可用", "池Cloud"]) {
+      const issues = checkValue("云端池", v);
+      assert.ok(
+        hasType(issues, "han") || hasType(issues, "han-glue"),
+        `expected han/han-glue in ${v}: ${JSON.stringify(issues)}`,
+      );
+    }
+  });
+
   it("catches calque + rest blacklist", () => {
     const v = "Đầu tiên dòng là Issue tiêu đề; rest là mô tả";
     const issues = checkValue("第一行作为 Issue 标题，其余作为描述", v);

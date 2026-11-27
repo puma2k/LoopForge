@@ -8,7 +8,9 @@ import assert from "node:assert/strict";
 import {
   createTranslator,
   emptyFillIconChrome,
+  extractConcatHanPieces,
   extractDisplayStrings,
+  extractFragmentHanRuns,
   extractFromHtml,
   extractQuotedStrings,
   isFullyTranslated,
@@ -240,7 +242,8 @@ describe("icon/spinner chrome empty-fill", () => {
       script = \`<span>\${flowPalette.icon('code',14)} 打开代码编辑器编写脚本</span>\`;
       count = \`<span>\${paIcon('user',12)}<span>\${n} 个加入申请</span></span>\`;
     `;
-    const texts = new Set(extractDisplayStrings(src).map((p) => p.text));
+    const parts = extractDisplayStrings(src);
+    const texts = new Set(parts.map((p) => p.text));
     assert.ok(
       texts.has("只读 · 可直接在本项目使用"),
       `expected bare 只读…, got ${JSON.stringify([...texts])}`,
@@ -274,9 +277,13 @@ describe("icon/spinner chrome empty-fill", () => {
       `expected bare 打开… after spaced flowPalette.icon, got ${JSON.stringify([...texts])}`,
     );
     assert.equal(
-      texts.has("个加入申请"),
+      parts.some(
+        (p) =>
+          p.text === "个加入申请" &&
+          /icon-empty$/.test(String(p.kind)),
+      ),
       false,
-      "must not strip number hole into bare 个加入申请",
+      "icon-empty must not strip number hole into bare 个加入申请",
     );
     assert.ok(
       texts.has("%s 个加入申请") || [...texts].some((t) => /个加入申请/.test(t) && t.includes("%s")),
@@ -368,5 +375,67 @@ describe("extractDisplayStrings integration", () => {
     assert.ok(texts.has("工作台") || [...texts].some((t) => t.includes("工作台")));
     assert.ok(texts.has("全局导航"));
     assert.ok(texts.has("进入"));
+  });
+});
+
+describe("concat / hole-adjacent / partial-translation coverage", () => {
+  it("extracts Chinese pieces from string concat", () => {
+    const src = `toast('执行机器已离线，请启动机器或更改默认'+x);`;
+    const pieces = extractConcatHanPieces(src).map((p) => p.raw);
+    assert.ok(
+      pieces.some((t) => t.includes("执行机器已离线，请启动机器或更改默认")),
+      `expected concat piece, got ${JSON.stringify(pieces)}`,
+    );
+    const texts = new Set(extractDisplayStrings(src).map((p) => p.text));
+    assert.ok(
+      texts.has("执行机器已离线，请启动机器或更改默认"),
+      `expected display concat, got ${JSON.stringify([...texts])}`,
+    );
+  });
+
+  it("extracts hole-adjacent Han runs from templates", () => {
+    const src = "const s = `${n} 台在线机器可用`;";
+    const texts = new Set(extractDisplayStrings(src).map((p) => p.text));
+    assert.ok(
+      texts.has("%s 台在线机器可用") || texts.has("${n} 台在线机器可用"),
+      `expected normalized template, got ${JSON.stringify([...texts])}`,
+    );
+    assert.ok(
+      texts.has("台在线机器可用"),
+      `expected bare Han run 台在线机器可用, got ${JSON.stringify([...texts])}`,
+    );
+  });
+
+  it("fails when 云端池 only partially translates (Cloud池)", () => {
+    const dict = {
+      云端: "Cloud",
+      "云端池 %s 台在线": "Nhóm đám mây %s máy trực tuyến",
+      台在线: " máy trực tuyến",
+    };
+    const { translate } = createTranslator(dict);
+    assert.equal(translate("云端池"), "Cloud池");
+    assert.equal(isFullyTranslated("云端池", translate), false);
+    const src = "parts.push(`云端池 ${n} 台在线`);";
+    const texts = new Set(extractDisplayStrings(src).map((p) => p.text));
+    assert.ok(texts.has("云端池"), `expected 云端池 run, got ${JSON.stringify([...texts])}`);
+    assert.equal(isFullyTranslated("云端池", translate), false);
+  });
+
+  it("extracts nested template Chinese (删除 Bot)", () => {
+    const src =
+      "return `${manage?`<button>${botIcon('trash')}删除 Bot</button>`:''}`;";
+    const quoted = extractQuotedStrings(src);
+    assert.ok(
+      quoted.some((q) => q.raw.includes("删除 Bot")),
+      `expected nested template with 删除 Bot, got ${JSON.stringify(quoted.map((q) => q.raw))}`,
+    );
+  });
+
+  it("extractFragmentHanRuns unions hole + mixed-script probes", () => {
+    assert.deepEqual(
+      new Set(extractFragmentHanRuns("云端池 %s 台在线")),
+      new Set(["台在线", "云端池"]),
+    );
+    assert.ok(extractFragmentHanRuns("Runner 有可用更新").includes("有可用更新"));
   });
 });

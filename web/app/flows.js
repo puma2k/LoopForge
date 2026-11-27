@@ -339,7 +339,7 @@ function flowNodeHTML(n,run,ro){
   const m=nodeMeta(n),kind=m.kind,status=run?.nodes?.[n.id]?.status||'';
   const agent=kind==='agent'?workflowAgent(n.agentId):null;
   const tile=agent?escapeHTML(flowPalette.initial(agent.name)):flowPalette.icon(FLOW_NODE_TYPES[kind].icon,16);
-  const title=state.renamingNode===n.id?`<input class="fd-rename" value="${escapeHTML(n.name)}" maxlength="120" aria-label="重命名步骤">`:escapeHTML(n.name);
+  const title=state.renamingNode===n.id?`<input class="fd-rename" value="${escapeHTML(n.name)}" maxlength="120" aria-label="重命名步骤">`:escapeHTML(catalogGeneric(state.workflow)?catalogUiText(n.name):n.name);
   const cls=['flow-node','fd-node','t-'+kind,state.selectedNode===n.id?'sel':'',state.connectFrom===n.id?'connecting':'',status?'s-'+status:'',kind==='preview'?'preview-build':''].filter(Boolean).join(' ');
   const tags=m.tags.map(t=>`<span class="fd-tag${t.warn?' warn':''}${t.mono?' mono':''}" title="${escapeHTML(t.text)}">${escapeHTML(t.text)}</span>`).join('');
   const outs=`<div class="fd-out ok">成功<span class="fd-port out" data-outlet="success" title="拖到下一步"></span></div>`+(kind==='preview'?'':`<div class="fd-out rj">失败打回<span class="fd-port out" data-outlet="reject" title="拖到失败时要打回的步骤"></span></div>`);
@@ -1014,7 +1014,7 @@ function agentBindCard(n){
 function flowDrawerHead(n,kind,label){
   const agent=kind==='agent'?workflowAgent(n.agentId):null;
   const tile=agent?escapeHTML(flowPalette.initial(agent.name)):flowPalette.icon(FLOW_NODE_TYPES[kind].icon,16);
-  const title=kind==='preview'?`<h3>${escapeHTML(n.name)}</h3>`:`<input class="fd-dh-name" data-p="name" value="${escapeHTML(n.name)}" maxlength="120" aria-label="步骤名称" spellcheck="false">`;
+  const title=kind==='preview'?`<h3>${escapeHTML(catalogGeneric(state.workflow)?catalogUiText(n.name):n.name)}</h3>`:`<input class="fd-dh-name" data-p="name" value="${escapeHTML(catalogGeneric(state.workflow)&&flowReadOnly()?catalogUiText(n.name):n.name)}" maxlength="120" aria-label="步骤名称" spellcheck="false">`;
   return `<div class="fd-dh"><span class="fd-tile" style="--tint:${flowNodeTint(n)}">${tile}</span><div class="fd-dh-t">${title}<small title="${escapeHTML(n.id)}">${label} · ${escapeHTML(n.id)}</small></div><button type="button" class="fd-icon-btn danger" id="deletePropertyNode" aria-label="删除步骤" data-tip="${kind==='preview'?'移除预览节点':'删除 Del'}">${flowPalette.icon('trash')}</button><button type="button" class="fd-icon-btn" id="closeNodeDrawer" aria-label="关闭" data-tip="关闭 Esc">${flowPalette.icon('x')}</button></div>`;
 }
 function flowFold(id,title,sub,body,defaultOpen){
@@ -1242,7 +1242,7 @@ function openSOPWizard(){
   const fallback=(state.data.workflows||[]).find(w=>!catalogGeneric(w)&&w.status==='published');
   const choices=[...generic,...recommended,...(fallback&&!recommended.some(w=>w.id===fallback.id)?[fallback]:[])];
   state.sopTemplate=choices[0]?.id||'blank';
-  $('#sopTemplateChoices').innerHTML=choices.map((w,index)=>`<label class="template-choice ${index===0?'active':''}"><input type="radio" name="template" value="${escapeHTML(w.id)}" ${index===0?'checked':''}><span class="template-icon">${catalogGeneric(w)?'通':w.id.includes('issue')?'修':w.id.includes('requirement')?'需':'▤'}</span><div><b>${escapeHTML(w.name)}</b><p>${escapeHTML(w.description||'复制生产模板')}</p><small>${catalogGeneric(w)?'通用 · 所有项目可用 · ':''}推荐 · ${w.nodes?.length||0} 个节点</small></div></label>`).join('')+`<label class="template-choice ${choices.length?'':'active'}"><input type="radio" name="template" value="blank" ${choices.length?'':'checked'}><span class="template-icon blank">＋</span><div><b>从空白开始</b><p>仅适合需要完全自定义的流程</p><small>高级方式 · 0 个节点</small></div></label>`;
+  $('#sopTemplateChoices').innerHTML=choices.map((w,index)=>{const name=catalogGeneric(w)?catalogUiText(w.name):w.name;const desc=catalogGeneric(w)?catalogUiText(w.description||'复制生产模板'):(w.description||'复制生产模板');return `<label class="template-choice ${index===0?'active':''}"><input type="radio" name="template" value="${escapeHTML(w.id)}" ${index===0?'checked':''}><span class="template-icon">${catalogGeneric(w)?'通':w.id.includes('issue')?'修':w.id.includes('requirement')?'需':'▤'}</span><div><b>${escapeHTML(name)}</b><p>${escapeHTML(desc)}</p><small>${catalogGeneric(w)?'通用 · 所有项目可用 · ':''}推荐 · ${w.nodes?.length||0} 个节点</small></div></label>`}).join('')+`<label class="template-choice ${choices.length?'':'active'}"><input type="radio" name="template" value="blank" ${choices.length?'':'checked'}><span class="template-icon blank">＋</span><div><b>从空白开始</b><p>仅适合需要完全自定义的流程</p><small>高级方式 · 0 个节点</small></div></label>`;
   $('#sopTemplateChoices').querySelectorAll('input').forEach(input=>input.onchange=()=>{$$('#sopTemplateChoices .template-choice').forEach(x=>x.classList.toggle('active',x.contains(input)));state.sopTemplate=input.value;syncSOPSandboxSelection()});
   setSOPWizardStep(1);$('#sopCreateModal').classList.add('open');setTimeout(()=>f.elements.name.focus(),0)}
 function setSOPWizardStep(step){

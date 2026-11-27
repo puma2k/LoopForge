@@ -144,7 +144,7 @@ function sopStatusBadge(w){
   return sopBadge('草稿','neutral','edit');
 }
 function sopCardHead(left,hint,right){return `<div class="sop-card-head"><div>${left}<span class="sop-card-hint">${escapeHTML(hint||'')}</span></div>${right}</div>`}
-function sopCardTitle(w){return `<div class="sop-card-title"><span class="sop-card-tile">${huiIcon('workflow')}</span><h3 title="${escapeHTML(w.name)}">${escapeHTML(w.name)}</h3></div>`}
+function sopCardTitle(w){const name=catalogGeneric(w)?catalogUiText(w.name):w.name;return `<div class="sop-card-title"><span class="sop-card-tile">${huiIcon('workflow')}</span><h3 title="${escapeHTML(name)}">${escapeHTML(name)}</h3></div>`}
 function sopCardPrimary(attr,id,label,icon='',title=''){return `<button type="button" class="sop-card-primary" ${attr}="${escapeHTML(id)}" data-hover-ink-control${title?` title="${escapeHTML(title)}"`:''}>${icon?huiIcon(icon):''}${escapeHTML(label)}</button>`}
 function sopCardMoreButton(w){return `<button type="button" class="sop-card-more" data-sop-menu="${escapeHTML(w.id)}" data-hover-ink-control aria-haspopup="menu" aria-expanded="false" aria-label="更多操作" title="更多操作">${huiIcon('more-horizontal')}</button>`}
 function sopRunKpis(m,liveCount){return `<div class="sop-kpis"><span><b>${m.totalRuns||0}</b>运行</span><span><b>${m.succeededRuns||0}</b>成功</span><span${m.failedRuns>0?' class="is-bad"':''}><b>${m.failedRuns||0}</b>失败</span><span><b>${liveCount}</b>进行中</span></div>`}
@@ -170,7 +170,8 @@ function genericSOPCard(w){
     ?sopCardPrimary('data-open-sop',copy.id,'查看项目副本','eye')
     :sopCardPrimary('data-adopt-generic',w.id,'复制到本项目','copy','复制后归本项目所有、可自由修改，不再跟随平台更新');
   const tags=(w.tags||[]).filter(t=>!t.startsWith('generic-source:')).join(' · ')||'通用模板';
-  return `<article class="sop-card generic" data-generic-id="${escapeHTML(w.id)}" tabindex="0" role="button" aria-label="使用通用模板：${escapeHTML(w.name)}">${sopCardHead(sopStatusBadge(w),'平台维护 · 与项目无关',sopBadge(`v${w.version||1}`,'neutral',''))}${sopCardTitle(w)}<p>${escapeHTML(w.description||'平台提供的通用流程模板')}</p>${sopRunRequirementChips(w)}${genericRequirementChips(w)}<div class="sop-kpis"><span><b>${nodes.length}</b>节点</span><span><b>${agentCount}</b>角色节点</span><span><b>${gates}</b>人工门禁</span><span><b>v${w.version||1}</b>版本</span></div><div class="sop-card-foot"><span class="sop-card-meta" title="${escapeHTML(`${w.owner||'平台'} · ${tags}`)}"><span class="sop-card-tag">${escapeHTML(w.owner||'平台')}</span>${escapeHTML(tags)}</span>${primary}${sopCardMoreButton(w)}</div></article>`;
+  const desc=catalogUiText(w.description||'平台提供的通用流程模板');
+  return `<article class="sop-card generic" data-generic-id="${escapeHTML(w.id)}" tabindex="0" role="button" aria-label="使用通用模板：${escapeHTML(catalogUiText(w.name))}">${sopCardHead(sopStatusBadge(w),'平台维护 · 与项目无关',sopBadge(`v${w.version||1}`,'neutral',''))}${sopCardTitle(w)}<p>${escapeHTML(desc)}</p>${sopRunRequirementChips(w)}${genericRequirementChips(w)}<div class="sop-kpis"><span><b>${nodes.length}</b>节点</span><span><b>${agentCount}</b>角色节点</span><span><b>${gates}</b>人工门禁</span><span><b>v${w.version||1}</b>版本</span></div><div class="sop-card-foot"><span class="sop-card-meta" title="${escapeHTML(`${w.owner||'平台'} · ${tags}`)}"><span class="sop-card-tag">${escapeHTML(w.owner||'平台')}</span>${escapeHTML(tags)}</span>${primary}${sopCardMoreButton(w)}</div></article>`;
 }
 function sopCatalogCard(w,metrics,live){
   if(catalogGeneric(w))return genericSOPCard(w);

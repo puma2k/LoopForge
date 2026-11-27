@@ -89,6 +89,26 @@ export const ALLOWLIST = [
     text: ",'保存项目设置时同时清空 Workspace 与 Iteration，已导入的需求不受影响。',",
     reason: "JS array literal slice mis-extracted as display string",
   },
+  {
+    text: "%s %s)} %s %s %s %s}、%s；留空则回退字段。', )} %s %s)} %s)}",
+    reason: "broken nested-template extract from project-webhooks field help",
+  },
+  {
+    text: ").replace(\n                    /^通用/,",
+    reason: "JSX source slice from QuickAccessWizard",
+  },
+  {
+    text: "}\" data-mode=\"source\">📄 源码</button>\n              </div>\n            ` :",
+    reason: "broken HTML-in-JS slice from runs.js source toggle",
+  },
+  {
+    text: ">可选强度<select data-catalog-effort-mode aria-label=",
+    reason: "broken HTML attribute slice from workbench.js",
+  },
+  {
+    text: ">取消</button><button type=",
+    reason: "broken HTML slice from workbench.js dialog buttons",
+  },
 ];
 
 /**
@@ -336,34 +356,224 @@ function unescapeJs(str) {
   });
 }
 
+function skipQuoted(src, i, q) {
+  i++;
+  while (i < src.length) {
+    const c = src[i];
+    if (c === "\\") {
+      i += 2;
+      continue;
+    }
+    if (c === q) return i + 1;
+    i++;
+  }
+  return i;
+}
+
+/**
+ * Parse a template literal starting at src[i] === '`'.
+ * Returns { end, raw, nested: [{raw,index}, ...] } where end is index after closing `.
+ * Nested templates inside ${…} are collected separately (and not inlined into raw —
+ * raw keeps a `${}` hole so normalizePlaceholders still works).
+ */
+function parseTemplateLiteral(src, i) {
+  const start = i;
+  i++; // opening `
+  let raw = "";
+  const nested = [];
+  while (i < src.length) {
+    const c = src[i];
+    if (c === "\\") {
+      raw += src[i] + (src[i + 1] || "");
+      i += 2;
+      continue;
+    }
+    if (c === "`") {
+      return { end: i + 1, raw, index: start, nested };
+    }
+    if (c === "$" && src[i + 1] === "{") {
+      raw += "${";
+      i += 2;
+      let depth = 1;
+      while (i < src.length && depth > 0) {
+        const ch = src[i];
+        if (ch === "\\") {
+          raw += src[i] + (src[i + 1] || "");
+          i += 2;
+          continue;
+        }
+        if (ch === "`") {
+          const inner = parseTemplateLiteral(src, i);
+          nested.push({ raw: inner.raw, index: i });
+          for (const n of inner.nested) nested.push(n);
+          i = inner.end;
+          continue;
+        }
+        if (ch === "'" || ch === '"') {
+          const q = ch;
+          raw += q;
+          i++;
+          while (i < src.length) {
+            const cq = src[i];
+            raw += cq;
+            if (cq === "\\") {
+              raw += src[i + 1] || "";
+              i += 2;
+              continue;
+            }
+            i++;
+            if (cq === q) break;
+          }
+          continue;
+        }
+        if (ch === "{") depth++;
+        else if (ch === "}") {
+          depth--;
+          if (depth === 0) {
+            raw += "}";
+            i++;
+            break;
+          }
+        }
+        raw += ch;
+        i++;
+      }
+      continue;
+    }
+    raw += c;
+    i++;
+  }
+  return { end: i, raw, index: start, nested };
+}
+
+function skippedByCallContext(src, index) {
+  const before = src.slice(Math.max(0, index - 60), index);
+  if (/console\.(log|warn|error|debug|info|trace)\s*\(\s*$/.test(before)) return true;
+  if (/new\s+RegExp\s*\(\s*$/.test(before)) return true;
+  return false;
+}
+
 /**
  * Extract quoted / template-literal contents that contain Han characters.
+ * Nested templates inside ${…} are extracted as their own entries (fixes
+ * `` `…${cond?`删除 Bot`:''}` `` which a flat regex misses).
  */
 export function extractQuotedStrings(src) {
   const found = [];
-  const reQ = /(["'])((?:\\.|(?!\1).)*)\1/g;
-  let m;
-  while ((m = reQ.exec(src)) !== null) {
-    const before = src.slice(Math.max(0, m.index - 60), m.index);
-    if (/console\.(log|warn|error|debug|info|trace)\s*\(\s*$/.test(before)) {
+  let i = 0;
+  while (i < src.length) {
+    const c = src[i];
+    if (c === "'" || c === '"') {
+      if (skippedByCallContext(src, i)) {
+        i = skipQuoted(src, i, c);
+        continue;
+      }
+      const q = c;
+      const start = i;
+      i++;
+      let raw = "";
+      while (i < src.length) {
+        const ch = src[i];
+        if (ch === "\\") {
+          raw += src[i] + (src[i + 1] || "");
+          i += 2;
+          continue;
+        }
+        if (ch === q) {
+          i++;
+          break;
+        }
+        raw += ch;
+        i++;
+      }
+      const text = unescapeJs(raw);
+      if (HAN.test(text)) found.push({ raw: text, index: start, kind: "quote" });
       continue;
     }
-    if (/new\s+RegExp\s*\(\s*$/.test(before)) continue;
-    const raw = unescapeJs(m[2]);
-    if (!HAN.test(raw)) continue;
-    found.push({ raw, index: m.index, kind: "quote" });
-  }
-  const reT = /`((?:\\.|[^`\\])*)`/g;
-  while ((m = reT.exec(src)) !== null) {
-    const before = src.slice(Math.max(0, m.index - 60), m.index);
-    if (/console\.(log|warn|error|debug|info|trace)\s*\(\s*$/.test(before)) {
+    if (c === "`") {
+      if (skippedByCallContext(src, i)) {
+        i = parseTemplateLiteral(src, i).end;
+        continue;
+      }
+      const t = parseTemplateLiteral(src, i);
+      const text = unescapeJs(t.raw);
+      if (HAN.test(text)) found.push({ raw: text, index: t.index, kind: "template" });
+      for (const n of t.nested) {
+        const nt = unescapeJs(n.raw);
+        if (HAN.test(nt)) found.push({ raw: nt, index: n.index, kind: "template" });
+      }
+      i = t.end;
       continue;
     }
-    const raw = unescapeJs(m[1]);
-    if (!HAN.test(raw)) continue;
-    found.push({ raw, index: m.index, kind: "template" });
+    i++;
   }
   return found;
+}
+
+/**
+ * Chinese string pieces glued with + (e.g. '执行机器已离线…'+x).
+ * Flat quote extraction already sees the literal; this tags concat context so
+ * coverage treats the piece as a runtime fragment even when short.
+ */
+export function extractConcatHanPieces(src) {
+  const found = [];
+  const re =
+    /(['"])((?:\\.|(?!\1).)*[\u3400-\u9fff](?:\\.|(?!\1).)*)\1\s*\+|\+\s*(['"])((?:\\.|(?!\3).)*[\u3400-\u9fff](?:\\.|(?!\3).)*)\3/g;
+  let m;
+  while ((m = re.exec(src)) !== null) {
+    const raw = unescapeJs(m[2] || m[4] || "");
+    if (HAN.test(raw)) found.push({ raw, index: m.index, kind: "concat" });
+  }
+  return found;
+}
+
+/**
+ * Contiguous Han runs immediately next to a %s hole (optional whitespace).
+ * Catches 云端池 / 台在线机器可用 that full-string printf covers while
+ * patterns still mangle the bare run (云端→Cloud池). Does not pull every
+ * mid-sentence Han span from long templates that merely contain a hole.
+ */
+export function extractHoleAdjacentHanRuns(text) {
+  const s = String(text || "");
+  if (!HAN.test(s) || !/%s/.test(s)) return [];
+  const holes = (s.match(/%s/g) || []).length;
+  // Simple printf labels only — skip long HTML templates with many holes.
+  if (holes > 2 || s.length > 60) return [];
+  const runs = new Set();
+  // Two passes so overlapping before/after holes both match.
+  for (const m of s.matchAll(/([\u3400-\u9fff]{2,})\s*%s/g)) runs.add(m[1]);
+  for (const m of s.matchAll(/%s(?:\s|[·•→\-:：])*(?:[\u3400-\u9fff]{2,})/g)) {
+    const han = m[0].match(/[\u3400-\u9fff]{2,}/);
+    if (han) runs.add(han[0]);
+  }
+  return [...runs];
+}
+
+/**
+ * Short Han runs inside mixed Latin+Han labels (e.g. Runner 有可用更新,
+ * 删除 Bot). Long product-name prose (>80 chars) is skipped — those stay
+ * covered by the whole-string dictionary entry.
+ */
+export function extractMixedScriptHanRuns(text) {
+  const s = String(text || "").trim();
+  if (!HAN.test(s) || !/[A-Za-z]{2,}/.test(s)) return [];
+  // Labels with one product token (Runner 有可用更新 / 删除 Bot). Prose that
+  // embeds SOP/API amid several Han spans stays covered by the whole string.
+  if (s.length > 40) return [];
+  const runs = s.match(/[\u3400-\u9fff]{2,16}/g) || [];
+  if (runs.length !== 1) return [];
+  if (runs[0] === s) return [];
+  return runs;
+}
+
+/** All extra Han-run probes for one display piece (deduped). */
+export function extractFragmentHanRuns(text) {
+  return [
+    ...new Set([
+      ...extractHoleAdjacentHanRuns(text),
+      ...extractMixedScriptHanRuns(text),
+    ]),
+  ];
 }
 
 export function looksLikeHtml(s) {
@@ -711,9 +921,18 @@ export function isNonDisplaySource(text) {
   ) {
     return true;
   }
-  if (/\b(?:querySelector|addEventListener|createElement|innerHTML|classList)\b/.test(t)) {
+  if (/\b(?:querySelector|addEventListener|createElement|innerHTML|classList|textContent|className)\b/.test(t)) {
     return true;
   }
+  // Nested-template / JSX slices that still contain JS punctuation soup.
+  if (/\|\|['"`]/.test(t) && /[)\]}]/.test(t)) return true;
+  if (/\)\s*\[\s*[a-zA-Z_]/.test(t)) return true; // %s)[item.sourceType]
+  if (/\.replace\s*\(/.test(t) || /\.length\s*\}/.test(t)) return true;
+  if (/^[\s?`;>{"']/.test(t) && /\$\{|<\/?[a-z]|className|data-mode|button type/i.test(t)) {
+    return true;
+  }
+  if (/<\/[a-z]+>/i.test(t) && /\$\{|className|button type|option value/i.test(t)) return true;
+  if (/^<option\b/i.test(t) || /^">/.test(t)) return true;
   // Mostly code with a tiny Chinese stub (e.g. default string inside a function).
   const han = (t.match(/[\u3400-\u9fff]/g) || []).length;
   if (han > 0 && han / t.length < 0.08 && /[{};()=>]/.test(t) && t.length > 80) {
@@ -731,13 +950,34 @@ export function isNonDisplaySource(text) {
   if (/^[:'),}\s]/.test(t) && /\$\{|paRow|references\.map/.test(t)) return true;
   if (/^: label\}/.test(t)) return true;
   if (/\$\{/.test(t) && /[\(\{]\s*$/.test(t)) return true;
+  // obsDeliveryMatches(it,id)).length} 单 — expression bleed
+  if (/^[a-zA-Z_$][\w$]*\s*\(/.test(t) && /\)\s*[.}]/.test(t)) return true;
   return false;
 }
 
-export function isFullyTranslated(text, translate) {
+/**
+ * True when fragment/pattern rewrite partially ate the string (Cloud池,
+ * 点击 Xóa, 有可用 Cập nhật). Untouched Chinese is OK when a parent printf
+ * key covers the full runtime text; fully translated is always OK.
+ */
+export function isPartialMangle(text, translate) {
+  if (!text || !HAN.test(text)) return false;
+  const direct = translate(text);
+  if (!HAN.test(direct)) return false;
+  const trimmed = String(text).trim();
+  if (direct === text || direct === trimmed) return false;
+  return true;
+}
+
+export function isFullyTranslated(text, translate, opts = {}) {
   if (!text || !HAN.test(text)) return true;
   if (ALLOWLIST_SET.has(text.trim())) return true;
   if (isNonDisplaySource(text)) return true;
+  // Hole/mixed-script Han runs: only fail on partial mangling. Untouched
+  // Chinese is covered by the parent printf/whole-string dictionary entry.
+  if (opts.hanRunOnly) {
+    return !isPartialMangle(text, translate);
+  }
   const direct = translate(text);
   if (!HAN.test(direct)) return true;
   // Placeholder-normalized variant (dynamic templates / printf keys).
@@ -771,6 +1011,13 @@ export function extractDisplayStrings(src, { isHtml = false, isJsx = false } = {
     }
   }
 
+  for (const { raw, index, kind } of extractConcatHanPieces(cleaned)) {
+    push(raw, index, kind);
+    for (const run of extractFragmentHanRuns(raw)) {
+      push(run, index, "concat-han-run");
+    }
+  }
+
   for (const { raw, index, kind } of extractQuotedStrings(cleaned)) {
     let text = raw;
     if (kind === "template") text = normalizePlaceholders(raw);
@@ -783,6 +1030,9 @@ export function extractDisplayStrings(src, { isHtml = false, isJsx = false } = {
     if (looksLikeHtml(text)) {
       for (const p of extractFromHtml(text)) {
         push(p.text, index, `html-in-js-${p.kind}`);
+        for (const run of extractFragmentHanRuns(p.text)) {
+          push(run, index, `html-in-js-${p.kind}-han-run`);
+        }
         // Single-%s pieces still get local sample fills (labels).
         if (sample) {
           for (const filled of sampleFillsForPiece(p.text)) {
@@ -797,6 +1047,9 @@ export function extractDisplayStrings(src, { isHtml = false, isJsx = false } = {
       }
     } else {
       push(text, index, kind);
+      for (const run of extractFragmentHanRuns(text)) {
+        push(run, index, `${kind}-han-run`);
+      }
       if (sample) {
         for (const filled of sampleFillsForPiece(text)) {
           push(filled, index, `${kind}-sample`);
@@ -814,9 +1067,15 @@ export function extractDisplayStrings(src, { isHtml = false, isJsx = false } = {
         if (looksLikeHtml(filledText) || looksLikeHtml(filledRaw)) {
           for (const p of extractFromHtml(filledText)) {
             push(p.text, index, `html-in-js-sample`);
+            for (const run of extractFragmentHanRuns(p.text)) {
+              push(run, index, `html-in-js-sample-han-run`);
+            }
           }
         } else {
           push(filledText, index, `${kind}-sample`);
+          for (const run of extractFragmentHanRuns(filledText)) {
+            push(run, index, `${kind}-sample-han-run`);
+          }
         }
       }
     }
@@ -827,9 +1086,15 @@ export function extractDisplayStrings(src, { isHtml = false, isJsx = false } = {
       if (looksLikeHtml(emptiedText) || looksLikeHtml(emptiedRaw)) {
         for (const p of extractFromHtml(emptiedText)) {
           push(p.text, index, `html-in-js-icon-empty`);
+          for (const run of extractFragmentHanRuns(p.text)) {
+            push(run, index, `html-in-js-icon-empty-han-run`);
+          }
         }
       } else if (emptiedText !== text) {
         push(emptiedText, index, `template-icon-empty`);
+        for (const run of extractFragmentHanRuns(emptiedText)) {
+          push(run, index, `template-icon-empty-han-run`);
+        }
       }
     }
   }
@@ -867,7 +1132,8 @@ export function findMissing(options = {}) {
     const isJsx = /\.jsx$/.test(file);
     const candidates = extractDisplayStrings(src, { isHtml, isJsx });
     for (const c of candidates) {
-      if (isFullyTranslated(c.text, translate)) continue;
+      const hanRun = /han-run/.test(String(c.kind || ""));
+      if (isFullyTranslated(c.text, translate, { hanRunOnly: hanRun })) continue;
       const key = c.text;
       if (seen.has(key)) {
         // Still record first file:line only; count duplicates via seen.
