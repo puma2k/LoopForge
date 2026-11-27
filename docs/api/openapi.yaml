@@ -28,6 +28,7 @@ tags:
   - name: Sync
   - name: Scheduling
   - name: Analytics
+  - name: Webhooks
 paths:
   /api/runs/{id}/wait:
     parameters:
@@ -1470,6 +1471,181 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+  /api/projects/{projectId}/webhooks:
+    parameters:
+      - name: projectId
+        in: path
+        required: true
+        schema: {type: string}
+    get:
+      tags: [Webhooks]
+      operationId: listProjectWebhooks
+      description: List inbound webhook channels for a project. Owner, maintainer, or platform admin.
+      responses:
+        "200":
+          description: Channel list (secrets masked)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  channels: {type: array, items: {$ref: "#/components/schemas/ProjectWebhookChannel"}}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+    post:
+      tags: [Webhooks]
+      operationId: createProjectWebhook
+      description: Create a channel. Returns deliveryToken and secret once.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/ProjectWebhookChannelInput"}
+      responses:
+        "201":
+          description: Created; secret and deliveryToken shown once
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  channel: {$ref: "#/components/schemas/ProjectWebhookChannel"}
+                  deliveryToken: {type: string}
+                  secret: {type: string}
+                  inboundURL: {type: string}
+                  inboundPath: {type: string}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+  /api/projects/{projectId}/webhooks/{channelId}:
+    parameters:
+      - {name: projectId, in: path, required: true, schema: {type: string}}
+      - {name: channelId, in: path, required: true, schema: {type: string}}
+    get:
+      tags: [Webhooks]
+      operationId: getProjectWebhook
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  channel: {$ref: "#/components/schemas/ProjectWebhookChannel"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+    put:
+      tags: [Webhooks]
+      operationId: updateProjectWebhook
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/ProjectWebhookChannelInput"}
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  channel: {$ref: "#/components/schemas/ProjectWebhookChannel"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+    delete:
+      tags: [Webhooks]
+      operationId: deleteProjectWebhook
+      responses:
+        "200": {description: Deleted}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+  /api/projects/{projectId}/webhooks/{channelId}/rotate-secret:
+    parameters:
+      - {name: projectId, in: path, required: true, schema: {type: string}}
+      - {name: channelId, in: path, required: true, schema: {type: string}}
+    post:
+      tags: [Webhooks]
+      operationId: rotateProjectWebhookSecret
+      description: Rotate channel secret; new secret returned once; previous secret keeps a short grace window.
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  secret: {type: string}
+                  secretPrefix: {type: string}
+                  secretVersion: {type: integer}
+                  previousSecretGrace: {type: string}
+                  previousSecretUntil: {type: string, format: date-time}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+  /api/projects/{projectId}/webhooks/{channelId}/events:
+    parameters:
+      - {name: projectId, in: path, required: true, schema: {type: string}}
+      - {name: channelId, in: path, required: true, schema: {type: string}}
+    get:
+      tags: [Webhooks]
+      operationId: listProjectWebhookEvents
+      description: Recent inbound event metadata (no secrets).
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  events: {type: array, items: {$ref: "#/components/schemas/ProjectWebhookEvent"}}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+  /api/webhooks/inbound/{token}:
+    parameters:
+      - name: token
+        in: path
+        required: true
+        schema: {type: string}
+        description: Unguessable delivery token from channel creation
+    post:
+      tags: [Webhooks]
+      operationId: inboundWebhook
+      security: []
+      description: |
+        Public inbound webhook. Authenticates with delivery token + HMAC or static token.
+        Requires X-LoopForge-Timestamp and X-LoopForge-Nonce. Optional Idempotency-Key.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {type: object, additionalProperties: true}
+      responses:
+        "201":
+          description: Issue created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  issueId: {type: string}
+                  number: {type: integer}
+                  eventId: {type: string}
+                  channelId: {type: string}
+                  taskId: {type: string}
+                  runId: {type: string}
+        "200": {description: Idempotent replay of a prior success}
+        "401": {description: Auth, timestamp, or nonce failure}
+        "403": {description: Channel disabled}
+        "413": {description: Payload too large}
+        "415": {description: Unsupported Content-Type}
+        "429": {description: Rate limited}
+        "502": {description: Issue created but SOP auto-dispatch failed}
   /api/projects/{projectId}/join-requests:
     parameters:
       - name: projectId
@@ -4925,6 +5101,59 @@ components:
         createdAt: {type: string, format: date-time}
         updatedAt: {type: string, format: date-time}
         reviewedAt: {type: string, format: date-time}
+    ProjectWebhookChannel:
+      type: object
+      properties:
+        id: {type: string}
+        projectId: {type: string}
+        name: {type: string}
+        description: {type: string}
+        enabled: {type: boolean}
+        deliveryTokenPrefix: {type: string}
+        authMode: {type: string, enum: [hmac, token, hmac_or_token]}
+        defaultWorkflowId: {type: string}
+        assigneeUserId: {type: integer, format: int64}
+        titleTemplate: {type: string}
+        descriptionTemplate: {type: string}
+        autoDispatch: {type: boolean}
+        maxBodyBytes: {type: integer}
+        secretPrefix: {type: string}
+        secretVersion: {type: integer}
+        hasPreviousSecret: {type: boolean}
+        previousSecretUntil: {type: string, format: date-time}
+        inboundPath: {type: string}
+        inboundURL: {type: string}
+        createdAt: {type: string, format: date-time}
+        updatedAt: {type: string, format: date-time}
+    ProjectWebhookChannelInput:
+      type: object
+      properties:
+        name: {type: string}
+        description: {type: string}
+        enabled: {type: boolean}
+        authMode: {type: string, enum: [hmac, token, hmac_or_token]}
+        defaultWorkflowId: {type: string}
+        assigneeUserId: {type: integer, format: int64}
+        titleTemplate: {type: string}
+        descriptionTemplate: {type: string}
+        autoDispatch: {type: boolean}
+        maxBodyBytes: {type: integer}
+    ProjectWebhookEvent:
+      type: object
+      properties:
+        id: {type: string}
+        channelId: {type: string}
+        projectId: {type: string}
+        status: {type: string}
+        reason: {type: string}
+        issueId: {type: string}
+        issueNumber: {type: integer}
+        taskId: {type: string}
+        runId: {type: string}
+        idempotencyKeyId: {type: string}
+        clientIp: {type: string}
+        payloadBytes: {type: integer}
+        receivedAt: {type: string, format: date-time}
     PlatformAccount:
       type: object
       properties:

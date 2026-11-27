@@ -39,7 +39,7 @@ function bindUserSearches(root=document){
   });
 }
 // Project admin has two levels: #/projects lists cards, #/projects/<id>[/<tab>] edits one project.
-const PROJECT_ADMIN_TABS=[{id:'basic',label:'基本信息'},{id:'repos',label:'代码仓库'},{id:'members',label:'项目成员'},{id:'tapd',label:'高级设置'}];
+const PROJECT_ADMIN_TABS=[{id:'basic',label:'基本信息'},{id:'repos',label:'代码仓库'},{id:'members',label:'项目成员'},{id:'webhooks',label:'Webhook'},{id:'tapd',label:'高级设置'}];
 // TAPD is a legacy tracker: its settings appear only once the platform has a TAPD integration or the project already uses one.
 function tapdIntegrationAvailable(project){
   if(project&&(String(project.tapdWorkspaceId||'').trim()||String(project.tapdIterationId||'').trim()))return true;
@@ -204,7 +204,8 @@ function projectAdminFormHTML(d,ctx){
       ${paRow('Workspace ID','TAPD 项目 URL 中 /tapd_fe/ 后的数字。',`<input class="pa-input mono" name="tapdWorkspaceId" value="${escapeHTML(d.tapdWorkspaceId||'')}" placeholder="例如 20375341" spellcheck="false">`)}
       ${paRow('Iteration ID','可选，只导入该迭代内的需求。',`<input class="pa-input mono" name="tapdIterationId" value="${escapeHTML(d.tapdIterationId||'')}" placeholder="留空导入全部" spellcheck="false">`)}
     </div>`):'')+paSection('危险操作','',`<div class="pa-rows">${projectDeleteRow(saved)}${configured?paRow(`清除已保存的 TAPD 配置${configured?' <span class="pa-chip">当前已配置</span>':''}`,'保存项目设置时同时清空 Workspace 与 Iteration，已导入的需求不受影响。',`<label class="pa-switch-wrap"><input type="checkbox" name="tapdClear" role="switch" ${d.tapdClear?'checked':''} aria-label="清除已保存的 TAPD 配置"><span class="pa-switch danger"></span></label>`,{attrs:' data-pa-row-inline'}):''}</div>`);
-  const panels={basic,repos:paSection('代码仓库','Agent 执行 SOP 时会克隆这些仓库。仓库保存后立即生效，无需点「保存项目设置」。',`<div data-pa-repo-box>${projectRepoListHTML(repos,saved?.defaultRepositoryId||'')}</div>`,repos.length?'<button type="button" class="button ghost small" data-repo-add>＋ 添加仓库</button>':''),members:projectMembersPanelHTML(d,saved),tapd:tapdPanel};
+  const webhooksPanel=typeof projectWebhooksPanelHTML==='function'?projectWebhooksPanelHTML(saved):paSection('Inbound Webhook','',`<p class="pa-hint">Webhook 管理模块未加载。</p>`);
+  const panels={basic,repos:paSection('代码仓库','Agent 执行 SOP 时会克隆这些仓库。仓库保存后立即生效，无需点「保存项目设置」。',`<div data-pa-repo-box>${projectRepoListHTML(repos,saved?.defaultRepositoryId||'')}</div>`,repos.length?'<button type="button" class="button ghost small" data-repo-add>＋ 添加仓库</button>':''),members:projectMembersPanelHTML(d,saved),webhooks:webhooksPanel,tapd:tapdPanel};
   const tab=state.projectAdminTab||'basic';
   return PROJECT_ADMIN_TABS.map(t=>`<section class="pa-panel" data-pa-panel="${t.id}" id="paPanel-${t.id}" role="tabpanel" aria-labelledby="paTab-${t.id}"${t.id===tab?'':' hidden'}>${creating&&t.id!=='basic'?'':panels[t.id]}</section>`).join('')
     +`<div class="pa-savebar-dock"><div class="pa-savebar" data-pa-savebar inert><span class="pa-savebar-tx"><i></i><span data-pa-savebar-text>有未保存的修改</span></span><button type="button" class="button ghost" data-pa-discard>放弃修改</button><button type="submit" class="button primary" data-pa-submit>保存项目设置</button></div></div>`;
@@ -246,6 +247,11 @@ function setProjectAdminTab(tab,opt={}){
   state.projectAdminTab=tab;
   $$('#projectAdminForm [data-pa-panel]').forEach(p=>p.hidden=p.dataset.paPanel!==tab);
   syncProjectAdminTabs();
+  if(tab==='webhooks'&&state.projectAdminDetailId&&state.projectAdminDetailId!=='new'){
+    const root=document.querySelector('#projectAdminForm [data-wh-root]');
+    if(typeof bindProjectWebhooks==='function')bindProjectWebhooks(root);
+    if(typeof loadProjectWebhooks==='function')loadProjectWebhooks();
+  }
   if(!opt.silent&&activeViewName()==='projects'){const next=projectAdminHash(state.projectAdminDetailId,tab);if(location.hash!==next)history.replaceState(history.state,'',next)}
   return true;
 }
@@ -377,6 +383,11 @@ function renderProjectDetail(opt={}){
   if(!PROJECT_ADMIN_TABS.some(t=>t.id===state.projectAdminTab)||creating&&state.projectAdminTab!=='basic')state.projectAdminTab='basic';
   form.querySelectorAll('[data-pa-panel]').forEach(p=>p.hidden=p.dataset.paPanel!==state.projectAdminTab);
   syncProjectAdminTabs();syncProjectAdminSaveBar();
+  if(!creating&&state.projectAdminTab==='webhooks'){
+    const root=form.querySelector('[data-wh-root]');
+    if(typeof bindProjectWebhooks==='function')bindProjectWebhooks(root);
+    if(typeof loadProjectWebhooks==='function')loadProjectWebhooks();
+  }
   requestAnimationFrame?.(moveProjectAdminTabIndicator);
 }
 function renderProjectAdmin(opt={}){

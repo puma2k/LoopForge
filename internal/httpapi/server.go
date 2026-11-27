@@ -46,6 +46,8 @@ type deps struct {
 	api        http.Handler
 	// passwordAttempts is this server's brute-force budget (auth_password.go).
 	passwordAttempts *passwordLimiter
+	// webhookAttempts budgets public inbound webhook posts per channel/IP.
+	webhookAttempts *webhookRateLimiter
 }
 
 // configureSync 是跨领域共享的依赖配置行为（mcp/issues/sync 都调用）。
@@ -79,6 +81,7 @@ type Server struct {
 	projects        *projectsHandlers
 	credentials     *projectCredentialsHandlers
 	insights        *insightsHandlers
+	webhooks        *webhooksHandlers
 	businessDomains *businessDomainsHandlers
 	catalog         *catalogHandlers  // catalog.go
 	mcp             *mcpHandlers      // mcp.go
@@ -128,7 +131,7 @@ func NewWithNotificationsAndBackground(ctx context.Context, s *repo.Store, e *en
 }
 
 func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Service, basicUser, basicPass string, notifications *notification.Service, bg *Background, startBackground func(*assistantHandlers, *runsHandlers)) *gin.Engine {
-	d := &deps{repo: s, engine: e, sync: syncSvc, authClient: auth.NewClientFromEnv(), passwordAttempts: newPasswordLimiter()}
+	d := &deps{repo: s, engine: e, sync: syncSvc, authClient: auth.NewClientFromEnv(), passwordAttempts: newPasswordLimiter(), webhookAttempts: newWebhookRateLimiter()}
 	if trustGatewayIdentityHeaders() && strings.TrimSpace(os.Getenv("AGENTFLOW_IDENTITY_HEADER_SECRET")) == "" {
 		log.Printf("warning: AGENTFLOW_TRUST_IDENTITY_HEADERS is on without AGENTFLOW_IDENTITY_HEADER_SECRET; any loopback caller without forwarding headers, including a proxy that passes client headers through, can sign in as any user")
 	}
@@ -169,6 +172,7 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 		insights:        &insightsHandlers{deps: d},
 		projects:        &projectsHandlers{deps: d},
 		credentials:     &projectCredentialsHandlers{deps: d},
+		webhooks:        &webhooksHandlers{deps: d},
 		mcp:             &mcpHandlers{deps: d},
 		market:          &marketHandlers{deps: d},
 		skillhub:        &skillhubHandlers{deps: d, client: newSkillhubClientFromEnv()},
@@ -545,6 +549,14 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	g.GET("/api/insights/v1/sources", api.insights.sources)
 	g.POST("/api/insights/v1/sources", api.insights.sources)
 	g.DELETE("/api/insights/v1/sources/:id", api.insights.revokeSource)
+	g.POST("/api/webhooks/inbound/:token", api.webhooks.inbound)
+	g.GET("/api/projects/:id/webhooks", api.webhooks.list)
+	g.POST("/api/projects/:id/webhooks", api.webhooks.create)
+	g.GET("/api/projects/:id/webhooks/:channelId", api.webhooks.get)
+	g.PUT("/api/projects/:id/webhooks/:channelId", api.webhooks.update)
+	g.DELETE("/api/projects/:id/webhooks/:channelId", api.webhooks.delete)
+	g.POST("/api/projects/:id/webhooks/:channelId/rotate-secret", api.webhooks.rotateSecret)
+	g.GET("/api/projects/:id/webhooks/:channelId/events", api.webhooks.events)
 	g.GET("/api/analytics", api.runs.analytics)
 	g.GET("/api/observability/spec", api.observabilitySpec)
 	g.POST("/api/otel/*path", api.otel)

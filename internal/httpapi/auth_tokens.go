@@ -67,6 +67,10 @@ func protectedAccessPath(path string) bool {
 	if path == insightIngestPath {
 		return false
 	}
+	// Inbound webhooks authenticate with URL token + HMAC/header secret.
+	if strings.HasPrefix(path, webhookInboundPathPrefix) {
+		return false
+	}
 	if path == "/mcp" {
 		return true
 	}
