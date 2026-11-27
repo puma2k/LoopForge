@@ -359,6 +359,11 @@ func (s *Service) process(ctx context.Context, bot domain.NotificationBot, lease
 				return s.Push(ctx, current, msg)
 			}
 			out := OutboundMessage{InteractionID: sending.ID, Action: sending.Action, ChatID: conv.ChatID, ChatType: conv.ChatType, Text: sending.Reply, SendKey: sending.SendKey, Route: s.replyRoute(sending), Card: card}
+			// Discord slash replies were deferred ephemeral; restore that on
+			// the rebuilt route so long follow-ups stay private (not /task Push).
+			if current.ChannelKind() == domain.BotChannelDiscord {
+				out.Route.Ephemeral = true
+			}
 			res := conn.Reply(ctx, out)
 			if res.Outcome == Delivered && current.ChannelKind() == domain.BotChannelWeCom && sending.Action == "" {
 				// WeCom replies stream text; a write confirmation or an

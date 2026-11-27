@@ -158,7 +158,8 @@ func TestDiscordInboundMapping(t *testing.T) {
 	if !ok || ev.Channel != ChannelDiscord || ev.AppID != "app-1" || ev.MessageID != "ix-9" || ev.EventID != "ix-9" ||
 		ev.SenderID != "u-9" || ev.SenderName != "Bobby" || ev.ChatID != "ch-1" || ev.ChatType != "group" ||
 		!ev.Mentioned || ev.MsgType != "text" || ev.Text != "how?" || ev.TenantKey != "guild-1" ||
-		ev.Route.Webhook != "itok" || ev.Route.RequestID != "ix-9" || ev.Route.MessageID != "app-1" {
+		ev.Route.Webhook != "itok" || ev.Route.RequestID != "ix-9" || ev.Route.MessageID != "app-1" ||
+		!ev.Route.Ephemeral {
 		t.Fatalf("ask = %+v", ev)
 	}
 	ix.Data = &DiscordCommandData{Name: "link"}
@@ -249,10 +250,12 @@ func TestDiscordVerifyRedactsTokenInErrorBody(t *testing.T) {
 func TestDiscordReplyChunks(t *testing.T) {
 	var mu sync.Mutex
 	var patches, posts []string
+	var postFlags []int
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
 		var payload struct {
 			Content string `json:"content"`
+			Flags   int    `json:"flags"`
 		}
 		_ = json.Unmarshal(body, &payload)
 		mu.Lock()
@@ -263,6 +266,7 @@ func TestDiscordReplyChunks(t *testing.T) {
 			json.NewEncoder(w).Encode(map[string]any{"id": "m-orig"})
 		case r.Method == http.MethodPost && strings.Contains(r.URL.Path, "/webhooks/"):
 			posts = append(posts, payload.Content)
+			postFlags = append(postFlags, payload.Flags)
 			json.NewEncoder(w).Encode(map[string]any{"id": "m-follow"})
 		default:
 			w.WriteHeader(404)
@@ -274,7 +278,7 @@ func TestDiscordReplyChunks(t *testing.T) {
 	long := strings.Repeat("a", 2500)
 	res := ch.replyInteraction(context.Background(), domain.NotificationBot{BotID: "app-1"}, "bot-tok", OutboundMessage{
 		Text:  long,
-		Route: ReplyRoute{Webhook: "ix-tok", MessageID: "app-1", ExpiresAt: time.Now().Add(time.Hour)},
+		Route: ReplyRoute{Webhook: "ix-tok", MessageID: "app-1", ExpiresAt: time.Now().Add(time.Hour), Ephemeral: true},
 	})
 	if res.Outcome != Delivered || res.PlatformMessageID != "m-orig" {
 		t.Fatalf("reply = %+v", res)
@@ -287,11 +291,122 @@ func TestDiscordReplyChunks(t *testing.T) {
 	if len(posts) != 1 || utf8.RuneCountInString(posts[0]) != 500 {
 		t.Fatalf("posts = %#v", posts)
 	}
+	if len(postFlags) != 1 || postFlags[0] != DiscordMessageFlagEphemeral {
+		t.Fatalf("follow-up flags = %#v want %d", postFlags, DiscordMessageFlagEphemeral)
+	}
 	joined := patches[0] + posts[0]
 	if joined != long {
 		t.Fatal("chunk content mismatch")
 	}
 }
+
+func TestDiscordAskEphemeralFollowUps(t *testing.T) {
+	const secret = "discord-bot-token-SECRET99"
+	var mu sync.Mutex
+	var patches int
+	var followBodies []map[string]any
+	var sawSecret bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		if strings.Contains(string(raw), secret) || strings.Contains(r.URL.Path, secret) {
+			sawSecret = true
+		}
+		var payload map[string]any
+		_ = json.Unmarshal(raw, &payload)
+		content, _ := payload["content"].(string)
+		if utf8.RuneCountInString(content) > 2000 {
+			t.Errorf("chunk too long: %d", utf8.RuneCountInString(content))
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		switch {
+		case r.Method == http.MethodPatch && strings.HasSuffix(r.URL.Path, "/messages/@original"):
+			patches++
+			json.NewEncoder(w).Encode(map[string]any{"id": "m-orig"})
+		case r.Method == http.MethodPost && strings.Contains(r.URL.Path, "/webhooks/"):
+			followBodies = append(followBodies, payload)
+			json.NewEncoder(w).Encode(map[string]any{"id": "m-follow"})
+		default:
+			w.WriteHeader(404)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	ch := newDiscordChannel()
+	ch.api = srv.URL
+	long := strings.Repeat("x", 4500)
+	res := ch.replyInteraction(context.Background(), domain.NotificationBot{BotID: "app-1"}, secret, OutboundMessage{
+		Text: long,
+		Route: ReplyRoute{
+			Webhook:   "ix-ask-tok",
+			MessageID: "app-1",
+			ExpiresAt: time.Now().Add(time.Hour),
+			Ephemeral: true,
+		},
+	})
+	if res.Outcome != Delivered {
+		t.Fatalf("reply = %+v", res)
+	}
+	if strings.Contains(res.SafeDetail, secret) || strings.Contains(res.Code, secret) {
+		t.Fatalf("token leaked in result: %+v", res)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if sawSecret {
+		t.Fatal("token appeared in request body or path")
+	}
+	if patches != 1 {
+		t.Fatalf("patches = %d", patches)
+	}
+	if len(followBodies) < 2 {
+		t.Fatalf("follow-ups = %d want ≥2", len(followBodies))
+	}
+	for i, body := range followBodies {
+		flags, _ := body["flags"].(float64)
+		if int(flags) != DiscordMessageFlagEphemeral {
+			t.Fatalf("follow-up[%d] flags = %#v want %d body=%#v", i, body["flags"], DiscordMessageFlagEphemeral, body)
+		}
+	}
+}
+
+func TestDiscordTaskThreadPushNotEphemeral(t *testing.T) {
+	var mu sync.Mutex
+	var bodies []map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var payload map[string]any
+		json.NewDecoder(r.Body).Decode(&payload)
+		mu.Lock()
+		bodies = append(bodies, payload)
+		mu.Unlock()
+		json.NewEncoder(w).Encode(map[string]any{"id": "msg-1"})
+	}))
+	t.Cleanup(srv.Close)
+	ch := newDiscordChannel()
+	ch.api = srv.URL
+	long := strings.Repeat("t", 2500)
+	res := ch.Push(context.Background(), domain.NotificationBot{BotID: "app"}, Credential{Secret: "tok"}, OutboundMessage{
+		ChatID: "thread-9",
+		Text:   long,
+		// Task progress threads stay public; Ephemeral must stay false.
+	})
+	if res.Outcome != Delivered {
+		t.Fatalf("push = %+v", res)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(bodies) < 2 {
+		t.Fatalf("push chunks = %d", len(bodies))
+	}
+	for i, body := range bodies {
+		if _, ok := body["flags"]; ok {
+			t.Fatalf("task push[%d] must not set ephemeral flags: %#v", i, body)
+		}
+		content, _ := body["content"].(string)
+		if utf8.RuneCountInString(content) > 2000 {
+			t.Fatalf("chunk too long: %d", utf8.RuneCountInString(content))
+		}
+	}
+}
+
 
 func TestDiscordPush(t *testing.T) {
 	var gotAuth, gotPath, gotContent string

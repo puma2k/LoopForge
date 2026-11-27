@@ -659,6 +659,8 @@ func discordInbound(bot domain.NotificationBot, ix DiscordInteraction) (InboundE
 			MessageID: appID,
 			Webhook:   ix.Token,
 			ExpiresAt: time.Now().UTC().Add(discordInteractionTTL),
+			// Matches the deferred interaction ack (always ephemeral).
+			Ephemeral: true,
 		},
 	}, true
 }
@@ -689,7 +691,8 @@ func (d *discordChannel) replyInteraction(ctx context.Context, bot domain.Notifi
 		chunks = []string{"\u200b"} // Discord rejects empty content; zero-width filler
 	}
 	original := d.apiBase() + "/webhooks/" + url.PathEscape(appID) + "/" + url.PathEscape(token) + "/messages/@original"
-	status, data, err := d.doJSON(ctx, http.MethodPatch, original, botToken, map[string]any{"content": chunks[0]})
+	first := map[string]any{"content": chunks[0]}
+	status, data, err := d.doJSON(ctx, http.MethodPatch, original, botToken, first)
 	if err != nil {
 		return classifyDiscordTransport(err, botToken)
 	}
@@ -705,7 +708,13 @@ func (d *discordChannel) replyInteraction(ctx context.Context, bot domain.Notifi
 	}
 	follow := d.apiBase() + "/webhooks/" + url.PathEscape(appID) + "/" + url.PathEscape(token)
 	for _, chunk := range chunks[1:] {
-		st, body, ferr := d.doJSON(ctx, http.MethodPost, follow, botToken, map[string]any{"content": chunk})
+		payload := map[string]any{"content": chunk}
+		// Follow-ups default to public unless flags match the deferred
+		// ephemeral response; Push to /task threads leaves Ephemeral false.
+		if msg.Route.Ephemeral {
+			payload["flags"] = DiscordMessageFlagEphemeral
+		}
+		st, body, ferr := d.doJSON(ctx, http.MethodPost, follow, botToken, payload)
 		if ferr != nil {
 			return classifyDiscordTransport(ferr, botToken)
 		}

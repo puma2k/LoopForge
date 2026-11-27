@@ -532,3 +532,17 @@ Object.assign(window.LF_I18N_EN, {
 Object.assign(window.LF_I18N_EN,{"确认 Bot 操作 · LoopForge":"Confirm Bot action · LoopForge","工蜂授权已完成 · LoopForge":"Gongfeng authorization complete · LoopForge","关联聊天账号 · LoopForge":"Link chat account · LoopForge","网页预览":"Page preview","LoopForge · 登录":"LoopForge · Sign in","LoopForge 工作台":"LoopForge Workspace","LoopForge · Agent 编排平台":"LoopForge · Agent orchestration platform"});
 Object.assign(window.LF_I18N_EN,{"服务器 Guild ID":"Guild ID","服务器确认":"Confirm server","通知接收人（可选）":"Notification recipient (optional)","服务器待确认":"Server pending","服务器已确认":"Server confirmed","服务器冲突":"Server conflict","下一步（可选）：通知接收人":"Next (optional): notification recipient","填写的 Guild ID":"Entered Guild ID","Public Key（可选）":"Public Key (optional)","允许的频道 ID（可选）":"Allowed channel IDs (optional)","默认 SOP / Workflow ID（可选）":"Default SOP / Workflow ID (optional)"});
 Object.assign(window.LF_I18N_EN,{"等待第一条事件。请让测试成员在 Discord 服务器中与机器人互动；Guild 与": "Waiting for the first event. Have a test member interact with the bot in the Discord server; when the Guild matches", "一致时自动确认，这条消息也会正常处理。": "it confirms automatically and that event is handled normally.", "已确认服务器": "Server confirmed", "只接收该服务器的消息。": "Only messages from this server are accepted.", "更换应用或服务器请新建配置。通知接收人可选，Discord /task 不依赖此项。": "To change the app or server, create a new config. Notification recipients are optional; Discord /task does not depend on this."});
+Object.assign(window.LF_I18N_EN, {
+  "Discord Developer Portal 中的 Application ID": "Application ID from the Discord Developer Portal",
+  "处理服务器频道中的消息与斜杠命令。保存时会校验 Bot Token；首条来自填写 Guild ID 的事件会自动确认服务器。支持 /link、/task、/ask。": "Handles messages and slash commands in server channels. Saving verifies the Bot Token; the first event from the entered Guild ID confirms the server. Supports /link, /task, and /ask.",
+  "Discord 服务器 ID（开发者模式右键复制）": "Discord server ID (copy via Developer Mode right-click)",
+  "服务器已确认，更换服务器请新建配置。": "Server confirmed; create a new config to change servers.",
+  "首条来自此 Guild 的事件会自动确认；不一致时停止处理并提示冲突。": "The first event from this Guild confirms automatically; mismatches stop processing and report a conflict.",
+  "Interactions 用的 Application Public Key（十六进制）": "Application Public Key for Interactions (hex)",
+  "逗号分隔，留空表示服务器内全部频道": "Comma-separated; leave empty for all channels in the server",
+  "仅这些频道处理斜杠命令与消息；最多 50 个。": "Only these channels handle slash commands and messages; up to 50.",
+  "Discord /task 未映射频道时使用的 SOP": "SOP used for Discord /task when the channel is unmapped",
+  "未填则回退到项目默认 SOP。": "If empty, falls back to the project default SOP.",
+  "刷新服务器信息": "Refresh server info",
+  "请填写名称、Application ID、Bot Token 和服务器 Guild ID": "Enter name, Application ID, Bot Token, and server Guild ID",
+});
