@@ -4,9 +4,14 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="color-scheme" content="light dark" />
-    <title>LoopForge 工作台</title>
+    <title>LoopForge · Bàn làm việc</title>
     <script src="/boot.js"></script>
     <script src="/i18n.js"></script>
+    <script>
+      // Static title stays Vietnamese (no Han) for UI language checks; set via
+      // the zh source key so English still resolves to "LoopForge Workspace".
+      document.title = (typeof lfT === "function" && lfT("LoopForge 工作台")) || document.title;
+    </script>
   </head>
   <body>
     <div id="root"></div>

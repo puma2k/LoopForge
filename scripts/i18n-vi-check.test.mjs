@@ -201,6 +201,31 @@ describe("i18n-vi-check must-fail cases (review findings)", () => {
       `expected term workspace: ${JSON.stringify(issues)}`,
     );
   });
+
+  it("catches thể hiện mistranslation when key contains 实例", () => {
+    const cases = [
+      [
+        "这是这个实例的第一个账号，拥有全部管理权限，默认项目也归它。之后队友可以自己注册，开关在「平台管理」里。",
+        "Đây là tài khoản đầu tiên trên thể hiện này. Tài khoản có toàn quyền quản trị.",
+      ],
+      ["个实例执行中", " thể hiện đang chạy"],
+      ["个实例等待门禁", " thể hiện đang chờ cổng duyệt"],
+      // Capitalized form must fail too (UI often starts a sentence with Thể hiện).
+      ["当前实例", "Thể hiện hiện tại"],
+      ["本实例未启用 scheduler", "Thể hiện này chưa bật bộ lập lịch"],
+    ];
+    for (const [key, v] of cases) {
+      const issues = checkValue(key, v);
+      assert.ok(
+        hasType(issues, "calque"),
+        `expected calque thể hiện for 实例 in ${JSON.stringify(v)}: ${JSON.stringify(issues)}`,
+      );
+      assert.ok(
+        issues.some((i) => i.detail.includes("thể hiện")),
+        `expected thể hiện detail: ${JSON.stringify(issues)}`,
+      );
+    }
+  });
 });
 
 describe("i18n-vi-check must-pass cases", () => {
@@ -306,6 +331,29 @@ describe("i18n-vi-check must-pass cases", () => {
       ['" title="打开运行', '" title="Mở lần chạy'],
       ["预览构建", "Xem trước bản dựng"],
       ["这个会话还没有工作区。", "Phiên này chưa có bàn làm việc."],
+    ];
+    for (const [key, value] of good) {
+      const issues = checkValue(key, value);
+      assert.deepEqual(
+        issues,
+        [],
+        `unexpected issues for ${value}: ${JSON.stringify(issues)}`,
+      );
+    }
+  });
+
+  it("passes fixed 实例 translations (not thể hiện)", () => {
+    const good = [
+      [
+        "这是这个实例的第一个账号，拥有全部管理权限，默认项目也归它。之后队友可以自己注册，开关在「平台管理」里。",
+        "Đây là tài khoản đầu tiên trên máy chủ LoopForge này. Tài khoản có toàn quyền quản trị và sở hữu dự án mặc định. Sau này đồng đội có thể tự đăng ký; bật/tắt trong “Quản trị nền tảng”.",
+      ],
+      ["个实例执行中", " lần chạy đang thực thi"],
+      ["个实例等待门禁", " lần chạy đang chờ cổng duyệt"],
+      ["当前实例", "Phiên bản hiện tại"],
+      ["本实例未启用 scheduler", "Phiên bản này chưa bật bộ lập lịch"],
+      // "thể hiện" OK when key means display/表现, not 实例
+      ["显示方式", "Cách thể hiện"],
     ];
     for (const [key, value] of good) {
       const issues = checkValue(key, value);

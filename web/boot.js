@@ -1,7 +1,7 @@
 // Apply the language before paint; boot-theme.js owns the theme.
 // i18n.js replaces lfT. Boot must still render if that script fails to load.
 // Visible UI is Vietnamese by default, or English. A leftover Chinese
-// localStorage value is migrated so a hard refresh no longer stays on 中文.
+// localStorage value is migrated so a hard refresh no longer stays on Chinese.
 window.lfT = window.lfT || ((zh) => zh);
 (() => {
   const root = document.documentElement;

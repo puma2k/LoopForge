@@ -1766,6 +1766,16 @@ function checkKeyValueFidelity(key, value) {
   if (BAN_BAN_RE.test(value)) {
     issues.push({ type: "calque", detail: "bản bản" });
   }
+  // 实例 (platform/run instance) mistranslated as "thể hiện" (display/表现).
+  // Case-insensitive: capitalized "Thể hiện…" was slipping past includes().
+  if (
+    typeof key === "string" &&
+    key.includes("实例") &&
+    typeof value === "string" &&
+    value.toLowerCase().includes("thể hiện")
+  ) {
+    issues.push({ type: "calque", detail: "thể hiện for 实例" });
+  }
   for (const id of MACHINE_IDS) {
     if (key.includes(id) && !value.includes(id)) {
       issues.push({ type: "machine-id", detail: id });

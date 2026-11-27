@@ -39,6 +39,10 @@ type ReplyRoute struct {
 	MessageID string    // Feishu original message_id for Message Reply
 	Webhook   string    // DingTalk sessionWebhook (authorization-bearing)
 	ExpiresAt time.Time // zero when the route does not expire
+	// Ephemeral is set for Discord interaction replies that were deferred
+	// with DiscordMessageFlagEphemeral. Follow-up webhook posts must carry
+	// the same flag or Discord publishes them to the channel.
+	Ephemeral bool
 }
 
 // InboundEvent is a channel-neutral message or card event. Adapters fill it
