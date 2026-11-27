@@ -1767,7 +1767,13 @@ function checkKeyValueFidelity(key, value) {
     issues.push({ type: "calque", detail: "bản bản" });
   }
   // 实例 (platform/run instance) mistranslated as "thể hiện" (display/表现).
-  if (typeof key === "string" && key.includes("实例") && value.includes("thể hiện")) {
+  // Case-insensitive: capitalized "Thể hiện…" was slipping past includes().
+  if (
+    typeof key === "string" &&
+    key.includes("实例") &&
+    typeof value === "string" &&
+    value.toLowerCase().includes("thể hiện")
+  ) {
     issues.push({ type: "calque", detail: "thể hiện for 实例" });
   }
   for (const id of MACHINE_IDS) {

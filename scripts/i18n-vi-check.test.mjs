@@ -210,6 +210,9 @@ describe("i18n-vi-check must-fail cases (review findings)", () => {
       ],
       ["个实例执行中", " thể hiện đang chạy"],
       ["个实例等待门禁", " thể hiện đang chờ cổng duyệt"],
+      // Capitalized form must fail too (UI often starts a sentence with Thể hiện).
+      ["当前实例", "Thể hiện hiện tại"],
+      ["本实例未启用 scheduler", "Thể hiện này chưa bật bộ lập lịch"],
     ];
     for (const [key, v] of cases) {
       const issues = checkValue(key, v);
@@ -347,6 +350,8 @@ describe("i18n-vi-check must-pass cases", () => {
       ],
       ["个实例执行中", " lần chạy đang thực thi"],
       ["个实例等待门禁", " lần chạy đang chờ cổng duyệt"],
+      ["当前实例", "Phiên bản hiện tại"],
+      ["本实例未启用 scheduler", "Phiên bản này chưa bật bộ lập lịch"],
       // "thể hiện" OK when key means display/表现, not 实例
       ["显示方式", "Cách thể hiện"],
     ];
